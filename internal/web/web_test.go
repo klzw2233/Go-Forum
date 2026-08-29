@@ -542,3 +542,77 @@ func TestHideFloorAndHiddenThreadPage(t *testing.T) {
 		t.Fatalf("hidden thread in board list: %s", body)
 	}
 }
+
+func TestEditTitleHTTP(t *testing.T) {
+	ts, client := testServer(t)
+	loginFounder(t, ts, client)
+	res, err := client.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+	res, err = client.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"旧标题"}, "body": {"一楼"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body := readBody(t, res)
+	if !strings.Contains(body, "/threads/1/title") {
+		t.Fatalf("edit title link missing: %s", body)
+	}
+	res, err = client.PostForm(ts.URL+"/threads/1/title", url.Values{"title": {"新标题"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body = readBody(t, res)
+	if !strings.Contains(body, "新标题") || strings.Contains(body, ">旧标题<") {
+		t.Fatalf("title not updated: %s", body)
+	}
+	if !strings.Contains(body, "标题已改") {
+		t.Fatalf("mark missing: %s", body)
+	}
+
+	res, err = client.PostForm(ts.URL+"/invites", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body = readBody(t, res)
+	re := regexp.MustCompile(`刚发出：<code class="invite">([^<]+)</code>`)
+	m := re.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("code: %s", body)
+	}
+	code := m[1]
+	res, err = client.PostForm(ts.URL+"/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	res, err = client.PostForm(ts.URL+"/register", url.Values{
+		"code": {code}, "login_name": {"wang"}, "display_name": {"老王"}, "password": {"hunter2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+	res, err = client.Get(ts.URL + "/threads/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "新标题") || !strings.Contains(body, "标题已改") {
+		t.Fatalf("member view: %s", body)
+	}
+	res, err = client.Get(ts.URL + "/threads/1/title")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member edit title %d", res.StatusCode)
+	}
+	res.Body.Close()
+}

@@ -132,3 +132,32 @@ func (s *Store) SetPostHidden(actor *forum.Member, postID int64, hidden bool) (*
 	p.Hidden = hidden
 	return p, nil
 }
+
+func (s *Store) UpdateThreadTitle(actor *forum.Member, threadID int64, newTitle string) (*forum.Thread, error) {
+	newTitle, err := forum.NormalizeTitle(newTitle)
+	if err != nil {
+		return nil, err
+	}
+	th, err := s.ThreadByID(threadID)
+	if err != nil {
+		return nil, err
+	}
+	posts, err := s.ListPosts(threadID)
+	if err != nil {
+		return nil, err
+	}
+	if !forum.CanEditTitle(actor, th, forum.ThreadHiddenFromMembers(posts)) {
+		return nil, forum.ErrCannotEditTitle
+	}
+	if newTitle == th.Title {
+		return th, nil
+	}
+	ts := now()
+	if _, err := s.db.Exec(`UPDATE threads SET title = ?, title_edited_at = ? WHERE id = ?`, newTitle, ts, threadID); err != nil {
+		return nil, err
+	}
+	t := parseTime(ts)
+	th.Title = newTitle
+	th.TitleEditedAt = &t
+	return th, nil
+}

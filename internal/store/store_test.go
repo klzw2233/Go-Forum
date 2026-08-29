@@ -372,3 +372,65 @@ func TestHidePostAndThreadList(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestUpdateThreadTitle(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("hunter2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "titlecodeaaa"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("titlecodeaaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, _, err := s.CreateThread(b.ID, mem.ID, "旧标题", "一楼")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.ThreadByID(th.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.UpdateThreadTitle(mem, th.ID, "新标题")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "新标题" || got.TitleEditedAt == nil {
+		t.Fatalf("%+v", got)
+	}
+	after, err := s.ThreadByID(th.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.LastPostAt.Equal(before.LastPostAt) {
+		t.Fatal("last_post_at moved")
+	}
+	if _, err := s.UpdateThreadTitle(mem, th.ID, ""); err != forum.ErrTitleEmpty {
+		t.Fatalf("empty: %v", err)
+	}
+	other := &forum.Member{ID: mem.ID + 99, Role: forum.RoleMember}
+	if _, err := s.UpdateThreadTitle(other, th.ID, "偷改"); err != forum.ErrCannotEditTitle {
+		t.Fatalf("other: %v", err)
+	}
+	posts, err := s.ListPosts(th.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetPostHidden(f, posts[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateThreadTitle(mem, th.ID, "作者再改"); err != forum.ErrCannotEditTitle {
+		t.Fatalf("author after hide: %v", err)
+	}
+	if _, err := s.UpdateThreadTitle(f, th.ID, "创始人改"); err != nil {
+		t.Fatal(err)
+	}
+}

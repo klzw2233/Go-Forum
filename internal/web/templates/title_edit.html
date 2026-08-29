@@ -1,0 +1,10 @@
+{{define "title"}}改标题{{end}}
+{{define "content"}}
+<h1>改标题</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form method="post" action="/threads/{{.Thread.ID}}/title">
+  <label>标题 <input name="title" value="{{.Thread.Title}}" required></label>
+  <button type="submit">保存</button>
+</form>
+<p><a href="/threads/{{.Thread.ID}}">返回主题</a></p>
+{{end}}

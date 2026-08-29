@@ -102,6 +102,7 @@ func Open(path string) (*Store, error) {
 	for _, stmt := range []string{
 		`ALTER TABLE posts ADD COLUMN edited_at TEXT`,
 		`ALTER TABLE posts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE threads ADD COLUMN title_edited_at TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -352,7 +353,7 @@ func (s *Store) CreateThread(boardID, authorID int64, title, body string) (*foru
 
 func (s *Store) ListThreads(boardID int64, viewer *forum.Member) ([]forum.ThreadView, error) {
 	q := `
-		SELECT t.id, t.board_id, t.title, t.author_id, t.created_at, t.last_post_at,
+		SELECT t.id, t.board_id, t.title, t.author_id, t.created_at, t.last_post_at, t.title_edited_at,
 		       m.login_name, m.display_name,
 		       COALESCE((SELECT p.hidden FROM posts p WHERE p.thread_id = t.id AND p.floor = 1), 0)
 		FROM threads t
@@ -369,12 +370,17 @@ func (s *Store) ListThreads(boardID int64, viewer *forum.Member) ([]forum.Thread
 	for rows.Next() {
 		var v forum.ThreadView
 		var created, last string
+		var titleEdited sql.NullString
 		var hidden int
-		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden); err != nil {
+		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &titleEdited, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden); err != nil {
 			return nil, err
 		}
 		v.CreatedAt = parseTime(created)
 		v.LastPostAt = parseTime(last)
+		if titleEdited.Valid && titleEdited.String != "" {
+			t := parseTime(titleEdited.String)
+			v.TitleEditedAt = &t
+		}
 		v.FirstHidden = hidden != 0
 		if v.FirstHidden && !forum.CanHidePost(viewer) {
 			continue
@@ -387,10 +393,11 @@ func (s *Store) ListThreads(boardID int64, viewer *forum.Member) ([]forum.Thread
 func (s *Store) ThreadByID(id int64) (*forum.Thread, error) {
 	var th forum.Thread
 	var created, last string
+	var titleEdited sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, board_id, title, author_id, created_at, last_post_at FROM threads WHERE id = ?`,
+		`SELECT id, board_id, title, author_id, created_at, last_post_at, title_edited_at FROM threads WHERE id = ?`,
 		id,
-	).Scan(&th.ID, &th.BoardID, &th.Title, &th.AuthorID, &created, &last)
+	).Scan(&th.ID, &th.BoardID, &th.Title, &th.AuthorID, &created, &last, &titleEdited)
 	if err == sql.ErrNoRows {
 		return nil, forum.ErrNotFound
 	}
@@ -399,6 +406,10 @@ func (s *Store) ThreadByID(id int64) (*forum.Thread, error) {
 	}
 	th.CreatedAt = parseTime(created)
 	th.LastPostAt = parseTime(last)
+	if titleEdited.Valid && titleEdited.String != "" {
+		t := parseTime(titleEdited.String)
+		th.TitleEditedAt = &t
+	}
 	return &th, nil
 }
 

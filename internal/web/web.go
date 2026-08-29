@@ -33,7 +33,7 @@ type Server struct {
 
 func New(st *store.Store) (*Server, error) {
 	s := &Server{store: st, mux: http.NewServeMux(), tpl: map[string]*template.Template{}}
-	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html", "register.html", "invites.html", "post_edit.html", "post_edits.html"}
+	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html", "register.html", "invites.html", "post_edit.html", "post_edits.html", "title_edit.html"}
 	for _, p := range pages {
 		t, err := template.ParseFS(embedded, "templates/layout.html", "templates/"+p)
 		if err != nil {
@@ -61,6 +61,8 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("GET /boards/{id}/threads/new", s.requireMember(s.getThreadNew))
 	s.mux.HandleFunc("POST /boards/{id}/threads/new", s.requireMember(s.postThreadNew))
 	s.mux.HandleFunc("GET /threads/{id}", s.requireMember(s.getThread))
+	s.mux.HandleFunc("GET /threads/{id}/title", s.requireMember(s.getTitleEdit))
+	s.mux.HandleFunc("POST /threads/{id}/title", s.requireMember(s.postTitleEdit))
 	s.mux.HandleFunc("POST /threads/{id}/posts", s.requireMember(s.postReply))
 	s.mux.HandleFunc("GET /posts/{id}/edit", s.requireMember(s.getPostEdit))
 	s.mux.HandleFunc("POST /posts/{id}/edit", s.requireMember(s.postPostEdit))
@@ -93,6 +95,8 @@ type page struct {
 	CanViewEdits   bool
 	CanHide        bool
 	ThreadHidden   bool
+	CanEditTitle   bool
+	TitleEdited    string
 }
 
 type postVM struct {
@@ -419,7 +423,11 @@ func (s *Server) getThread(w http.ResponseWriter, r *http.Request, m *forum.Memb
 		s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, ThreadHidden: true})
 		return
 	}
-	s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts), ThreadHidden: hidden})
+	pg := page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts), ThreadHidden: hidden, CanEditTitle: forum.CanEditTitle(m, th, hidden)}
+	if th.TitleEditedAt != nil {
+		pg.TitleEdited = "标题已改 " + forum.FormatTimeUTC(*th.TitleEditedAt) + " UTC"
+	}
+	s.render(w, "thread.html", pg)
 }
 
 func (s *Server) postReply(w http.ResponseWriter, r *http.Request, m *forum.Member) {
@@ -634,4 +642,53 @@ func (s *Server) getPostEdits(w http.ResponseWriter, r *http.Request, m *forum.M
 		})
 	}
 	s.render(w, "post_edits.html", page{Member: m, Post: p, Edits: vms})
+}
+
+func (s *Server) getTitleEdit(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.titleEdit(w, r, m, false)
+}
+
+func (s *Server) postTitleEdit(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.titleEdit(w, r, m, true)
+}
+
+func (s *Server) titleEdit(w http.ResponseWriter, r *http.Request, m *forum.Member, save bool) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	th, err := s.store.ThreadByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	posts, err := s.store.ListPosts(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	hidden := forum.ThreadHiddenFromMembers(posts)
+	if hidden && !forum.CanHidePost(m) {
+		http.Error(w, "这篇主题不可见", http.StatusForbidden)
+		return
+	}
+	if !forum.CanEditTitle(m, th, hidden) {
+		http.Error(w, "不能修改这个标题", http.StatusForbidden)
+		return
+	}
+	if !save {
+		s.render(w, "title_edit.html", page{Member: m, Thread: th})
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.render(w, "title_edit.html", page{Member: m, Thread: th, Error: "表单无效"})
+		return
+	}
+	updated, err := s.store.UpdateThreadTitle(m, th.ID, r.FormValue("title"))
+	if err != nil {
+		s.render(w, "title_edit.html", page{Member: m, Thread: th, Error: publicErr(err)})
+		return
+	}
+	http.Redirect(w, r, "/threads/"+strconv.FormatInt(updated.ID, 10), http.StatusSeeOther)
 }
