@@ -5,6 +5,8 @@
 <h1>这篇主题不可见</h1>
 {{else}}
 <h1>{{.Thread.Title}}</h1>
+{{if .TitleEdited}}<p class="muted">{{.TitleEdited}}</p>{{end}}
+{{if .CanEditTitle}}<p><a href="/threads/{{.Thread.ID}}/title">改标题</a></p>{{end}}
 {{range .Posts}}
 <article class="post" id="floor-{{.Floor}}">
   <header>

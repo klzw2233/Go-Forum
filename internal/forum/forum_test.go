@@ -161,3 +161,25 @@ func TestThreadHiddenFromMembers(t *testing.T) {
 		t.Fatal("hidden first floor")
 	}
 }
+
+func TestCanEditTitle(t *testing.T) {
+	th := &Thread{AuthorID: 2}
+	if CanEditTitle(nil, th, false) {
+		t.Fatal("nil")
+	}
+	if CanEditTitle(&Member{ID: 3, Role: RoleMember}, th, false) {
+		t.Fatal("other member")
+	}
+	if !CanEditTitle(&Member{ID: 2, Role: RoleMember}, th, false) {
+		t.Fatal("author")
+	}
+	if CanEditTitle(&Member{ID: 2, Role: RoleMember}, th, true) {
+		t.Fatal("author when first floor hidden")
+	}
+	if !CanEditTitle(&Member{ID: 1, Role: RoleFounder}, th, true) {
+		t.Fatal("founder when hidden")
+	}
+	if !CanEditTitle(&Member{ID: 9, Role: RoleOperator}, th, false) {
+		t.Fatal("operator")
+	}
+}
