@@ -401,3 +401,144 @@ func TestEditPostAndHistoryAccess(t *testing.T) {
 		t.Fatalf("member edit others %d", res.StatusCode)
 	}
 }
+
+func TestHideFloorAndHiddenThreadPage(t *testing.T) {
+	ts, client := testServer(t)
+	loginFounder(t, ts, client)
+
+	res, err := client.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+
+	res, err = client.PostForm(ts.URL+"/boards/1/threads/new", url.Values{
+		"title": {"主题甲"},
+		"body":  {"一楼正文"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+
+	res, err = client.PostForm(ts.URL+"/threads/1/posts", url.Values{"body": {"二楼秘密"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+
+	res, err = client.PostForm(ts.URL+"/posts/2/hide", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body := readBody(t, res)
+	if !strings.Contains(body, "取消隐藏") {
+		t.Fatalf("staff hide control: %s", body)
+	}
+
+	res, err = client.PostForm(ts.URL+"/invites", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body = readBody(t, res)
+	re := regexp.MustCompile(`刚发出：<code class="invite">([^<]+)</code>`)
+	m := re.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("code missing: %s", body)
+	}
+	code := m[1]
+	res, err = client.PostForm(ts.URL+"/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	res, err = client.PostForm(ts.URL+"/register", url.Values{
+		"code":         {code},
+		"login_name":   {"wang"},
+		"display_name": {"老王"},
+		"password":     {"hunter2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+
+	res, err = client.Get(ts.URL + "/threads/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "已隐藏") {
+		t.Fatalf("placeholder missing: %s", body)
+	}
+	if strings.Contains(body, "二楼秘密") {
+		t.Fatalf("hidden body leaked: %s", body)
+	}
+	if !strings.Contains(body, "老王") && !strings.Contains(body, "jimmy") {
+		t.Fatalf("author missing on placeholder: %s", body)
+	}
+
+	res, err = client.PostForm(ts.URL+"/posts/2/hide", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member hide %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = client.PostForm(ts.URL+"/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	loginFounder(t, ts, client)
+	res, err = client.PostForm(ts.URL+"/posts/1/hide", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body = readBody(t, res)
+	if !strings.Contains(body, "一楼正文") {
+		t.Fatalf("founder should still see first floor: %s", body)
+	}
+
+	res, err = client.PostForm(ts.URL+"/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	res, err = client.PostForm(ts.URL+"/login", url.Values{"login_name": {"wang"}, "password": {"hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+
+	res, err = client.Get(ts.URL + "/threads/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "这篇主题不可见") {
+		t.Fatalf("hidden thread page: %s", body)
+	}
+	if strings.Contains(body, "一楼正文") {
+		t.Fatalf("first floor leaked: %s", body)
+	}
+
+	res, err = client.Get(ts.URL + "/boards/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if strings.Contains(body, "主题甲") {
+		t.Fatalf("hidden thread in board list: %s", body)
+	}
+}

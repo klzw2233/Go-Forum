@@ -136,3 +136,28 @@ func TestCanViewEdits(t *testing.T) {
 		t.Fatal("operator and founder must view edits")
 	}
 }
+
+func TestCanEditHiddenPost(t *testing.T) {
+	p := &Post{AuthorID: 2, Hidden: true}
+	if CanEditPost(&Member{ID: 2, Role: RoleMember}, p) {
+		t.Fatal("author must not edit hidden post")
+	}
+}
+
+func TestCanHidePost(t *testing.T) {
+	if CanHidePost(nil) || CanHidePost(&Member{Role: RoleMember}) {
+		t.Fatal("member must not hide")
+	}
+	if !CanHidePost(&Member{Role: RoleOperator}) || !CanHidePost(&Member{Role: RoleFounder}) {
+		t.Fatal("operator and founder must hide")
+	}
+}
+
+func TestThreadHiddenFromMembers(t *testing.T) {
+	if ThreadHiddenFromMembers([]PostView{{Post: Post{Floor: 1, Hidden: false}}}) {
+		t.Fatal("visible first floor")
+	}
+	if !ThreadHiddenFromMembers([]PostView{{Post: Post{Floor: 1, Hidden: true}}, {Post: Post{Floor: 2}}}) {
+		t.Fatal("hidden first floor")
+	}
+}

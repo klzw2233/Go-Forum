@@ -48,6 +48,8 @@ var (
 	ErrCannotIssueInvite = errors.New("cannot issue invite codes")
 	ErrCannotEditPost    = errors.New("cannot edit this post")
 	ErrCannotViewEdits   = errors.New("cannot view edit history")
+	ErrCannotHidePost    = errors.New("cannot hide this post")
+	ErrCannotReply       = errors.New("cannot reply to this thread")
 )
 
 type Member struct {
@@ -83,12 +85,14 @@ type Post struct {
 	BodyMarkdown string
 	CreatedAt    time.Time
 	EditedAt     *time.Time
+	Hidden       bool
 }
 
 type ThreadView struct {
 	Thread
 	AuthorLoginName   string
 	AuthorDisplayName string
+	FirstHidden       bool
 }
 
 type PostView struct {
@@ -211,7 +215,20 @@ func CanIssueInvite(m *Member) bool {
 }
 
 func CanEditPost(m *Member, p *Post) bool {
-	return m != nil && p != nil && m.ID == p.AuthorID
+	return m != nil && p != nil && m.ID == p.AuthorID && !p.Hidden
+}
+
+func CanHidePost(m *Member) bool {
+	return CanIssueInvite(m)
+}
+
+func ThreadHiddenFromMembers(posts []PostView) bool {
+	for _, p := range posts {
+		if p.Floor == FirstFloor {
+			return p.Hidden
+		}
+	}
+	return false
 }
 
 func CanViewEdits(m *Member) bool {

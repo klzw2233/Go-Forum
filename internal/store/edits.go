@@ -10,10 +10,11 @@ func (s *Store) PostByID(id int64) (*forum.Post, error) {
 	var p forum.Post
 	var created string
 	var edited sql.NullString
+	var hidden int
 	err := s.db.QueryRow(
-		`SELECT id, thread_id, author_id, floor, body_markdown, created_at, edited_at FROM posts WHERE id = ?`,
+		`SELECT id, thread_id, author_id, floor, body_markdown, created_at, edited_at, hidden FROM posts WHERE id = ?`,
 		id,
-	).Scan(&p.ID, &p.ThreadID, &p.AuthorID, &p.Floor, &p.BodyMarkdown, &created, &edited)
+	).Scan(&p.ID, &p.ThreadID, &p.AuthorID, &p.Floor, &p.BodyMarkdown, &created, &edited, &hidden)
 	if err == sql.ErrNoRows {
 		return nil, forum.ErrNotFound
 	}
@@ -25,6 +26,7 @@ func (s *Store) PostByID(id int64) (*forum.Post, error) {
 		t := parseTime(edited.String)
 		p.EditedAt = &t
 	}
+	p.Hidden = hidden != 0
 	return &p, nil
 }
 
@@ -42,10 +44,11 @@ func (s *Store) UpdatePost(actor *forum.Member, postID int64, newBody string) (*
 	var p forum.Post
 	var created string
 	var edited sql.NullString
+	var hidden int
 	err = tx.QueryRow(
-		`SELECT id, thread_id, author_id, floor, body_markdown, created_at, edited_at FROM posts WHERE id = ?`,
+		`SELECT id, thread_id, author_id, floor, body_markdown, created_at, edited_at, hidden FROM posts WHERE id = ?`,
 		postID,
-	).Scan(&p.ID, &p.ThreadID, &p.AuthorID, &p.Floor, &p.BodyMarkdown, &created, &edited)
+	).Scan(&p.ID, &p.ThreadID, &p.AuthorID, &p.Floor, &p.BodyMarkdown, &created, &edited, &hidden)
 	if err == sql.ErrNoRows {
 		return nil, forum.ErrNotFound
 	}
@@ -57,6 +60,7 @@ func (s *Store) UpdatePost(actor *forum.Member, postID int64, newBody string) (*
 		t := parseTime(edited.String)
 		p.EditedAt = &t
 	}
+	p.Hidden = hidden != 0
 	if !forum.CanEditPost(actor, &p) {
 		return nil, forum.ErrCannotEditPost
 	}
@@ -108,4 +112,23 @@ func (s *Store) ListEdits(postID int64) ([]forum.Edit, error) {
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) SetPostHidden(actor *forum.Member, postID int64, hidden bool) (*forum.Post, error) {
+	if !forum.CanHidePost(actor) {
+		return nil, forum.ErrCannotHidePost
+	}
+	p, err := s.PostByID(postID)
+	if err != nil {
+		return nil, err
+	}
+	v := 0
+	if hidden {
+		v = 1
+	}
+	if _, err := s.db.Exec(`UPDATE posts SET hidden = ? WHERE id = ?`, v, postID); err != nil {
+		return nil, err
+	}
+	p.Hidden = hidden
+	return p, nil
 }
