@@ -1,0 +1,20 @@
+{{define "title"}}{{.Thread.Title}}{{end}}
+{{define "content"}}
+<p class="crumb"><a href="/">版块</a> / <a href="/boards/{{.Board.ID}}">{{.Board.Name}}</a></p>
+<h1>{{.Thread.Title}}</h1>
+{{range .Posts}}
+<article class="post" id="floor-{{.Floor}}">
+  <header>
+    <span class="floor">#{{.Floor}}</span>
+    <span class="who">{{.AuthorDisplayName}} <b class="login">{{.AuthorLoginName}}</b>{{if .RoleLabel}} <span class="badge">{{.RoleLabel}}</span>{{end}}</span>
+  </header>
+  <div class="body">{{.BodyHTML}}</div>
+</article>
+{{end}}
+<h2>回帖</h2>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form method="post" action="/threads/{{.Thread.ID}}/posts">
+  <label>正文（Markdown） <textarea name="body" rows="8" required></textarea></label>
+  <button type="submit">回复</button>
+</form>
+{{end}}

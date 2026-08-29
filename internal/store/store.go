@@ -1,0 +1,448 @@
+package store
+
+import (
+	"database/sql"
+	"fmt"
+	"time"
+
+	"go-forum/internal/forum"
+
+	_ "modernc.org/sqlite"
+)
+
+const schema = `
+PRAGMA foreign_keys = ON;
+PRAGMA busy_timeout = 5000;
+
+CREATE TABLE IF NOT EXISTS members (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	login_name TEXT NOT NULL UNIQUE,
+	display_name TEXT NOT NULL,
+	password_hash TEXT NOT NULL,
+	role TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+	id TEXT PRIMARY KEY,
+	member_id INTEGER NOT NULL REFERENCES members(id),
+	expires_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS boards (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL,
+	description TEXT NOT NULL,
+	sort INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS threads (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	board_id INTEGER NOT NULL REFERENCES boards(id),
+	title TEXT NOT NULL,
+	author_id INTEGER NOT NULL REFERENCES members(id),
+	created_at TEXT NOT NULL,
+	last_post_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS posts (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	thread_id INTEGER NOT NULL REFERENCES threads(id),
+	author_id INTEGER NOT NULL REFERENCES members(id),
+	floor INTEGER NOT NULL,
+	body_markdown TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	UNIQUE(thread_id, floor)
+);
+
+CREATE INDEX IF NOT EXISTS idx_threads_board_last ON threads(board_id, last_post_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_thread_floor ON posts(thread_id, floor);
+CREATE INDEX IF NOT EXISTS idx_sessions_member ON sessions(member_id);
+`
+
+type Store struct {
+	db *sql.DB
+}
+
+func Open(path string) (*Store, error) {
+	dsn := path
+	if path != ":memory:" {
+		dsn = "file:" + path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	if path == ":memory:" {
+		db.SetMaxOpenConns(1)
+	}
+	if _, err := db.Exec(schema); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("schema: %w", err)
+	}
+	return &Store{db: db}, nil
+}
+
+func (s *Store) Close() error {
+	return s.db.Close()
+}
+
+func now() string {
+	return time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+func parseTime(v string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		t, _ = time.Parse(time.RFC3339, v)
+	}
+	return t
+}
+
+func (s *Store) EnsureFounder(loginName, displayName, passwordHash string) (*forum.Member, error) {
+	if !forum.ValidLoginName(loginName) {
+		return nil, forum.ErrInvalidLoginName
+	}
+	displayName, err := forum.NormalizeDisplayName(displayName)
+	if err != nil {
+		return nil, err
+	}
+	m, _, err := s.MemberByLogin(loginName)
+	if err == nil {
+		return m, nil
+	}
+	if err != forum.ErrNotFound {
+		return nil, err
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO members (login_name, display_name, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)`,
+		loginName, displayName, passwordHash, string(forum.RoleFounder), now(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert founder: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	return s.MemberByID(id)
+}
+
+func (s *Store) MemberByLogin(loginName string) (*forum.Member, string, error) {
+	var m forum.Member
+	var hash, created, role string
+	err := s.db.QueryRow(
+		`SELECT id, login_name, display_name, password_hash, role, created_at FROM members WHERE login_name = ?`,
+		loginName,
+	).Scan(&m.ID, &m.LoginName, &m.DisplayName, &hash, &role, &created)
+	if err == sql.ErrNoRows {
+		return nil, "", forum.ErrNotFound
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	m.Role = forum.Role(role)
+	m.CreatedAt = parseTime(created)
+	return &m, hash, nil
+}
+
+func (s *Store) MemberByID(id int64) (*forum.Member, error) {
+	var m forum.Member
+	var created, role string
+	err := s.db.QueryRow(
+		`SELECT id, login_name, display_name, role, created_at FROM members WHERE id = ?`,
+		id,
+	).Scan(&m.ID, &m.LoginName, &m.DisplayName, &role, &created)
+	if err == sql.ErrNoRows {
+		return nil, forum.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	m.Role = forum.Role(role)
+	m.CreatedAt = parseTime(created)
+	return &m, nil
+}
+
+func (s *Store) CreateSession(memberID int64, token string, expires time.Time) error {
+	_, err := s.db.Exec(
+		`INSERT INTO sessions (id, member_id, expires_at) VALUES (?, ?, ?)`,
+		token, memberID, expires.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *Store) MemberBySession(token string) (*forum.Member, error) {
+	var memberID int64
+	var expires string
+	err := s.db.QueryRow(`SELECT member_id, expires_at FROM sessions WHERE id = ?`, token).Scan(&memberID, &expires)
+	if err == sql.ErrNoRows {
+		return nil, forum.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if parseTime(expires).Before(time.Now()) {
+		_, _ = s.db.Exec(`DELETE FROM sessions WHERE id = ?`, token)
+		return nil, forum.ErrNotFound
+	}
+	return s.MemberByID(memberID)
+}
+
+func (s *Store) DeleteSession(token string) error {
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE id = ?`, token)
+	return err
+}
+
+func (s *Store) CreateBoard(name, description string) (*forum.Board, error) {
+	name, err := forum.NormalizeBoardName(name)
+	if err != nil {
+		return nil, err
+	}
+	description, err = forum.NormalizeBoardDesc(description)
+	if err != nil {
+		return nil, err
+	}
+	var maxSort int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(sort), 0) FROM boards`).Scan(&maxSort); err != nil {
+		return nil, err
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO boards (name, description, sort, created_at) VALUES (?, ?, ?, ?)`,
+		name, description, maxSort+1, now(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	return s.BoardByID(id)
+}
+
+func (s *Store) ListBoards() ([]forum.Board, error) {
+	rows, err := s.db.Query(`SELECT id, name, description, sort, created_at FROM boards ORDER BY sort ASC, id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []forum.Board
+	for rows.Next() {
+		var b forum.Board
+		var created string
+		if err := rows.Scan(&b.ID, &b.Name, &b.Description, &b.Sort, &created); err != nil {
+			return nil, err
+		}
+		b.CreatedAt = parseTime(created)
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) BoardByID(id int64) (*forum.Board, error) {
+	var b forum.Board
+	var created string
+	err := s.db.QueryRow(
+		`SELECT id, name, description, sort, created_at FROM boards WHERE id = ?`,
+		id,
+	).Scan(&b.ID, &b.Name, &b.Description, &b.Sort, &created)
+	if err == sql.ErrNoRows {
+		return nil, forum.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	b.CreatedAt = parseTime(created)
+	return &b, nil
+}
+
+func (s *Store) CreateThread(boardID, authorID int64, title, body string) (*forum.Thread, *forum.Post, error) {
+	title, err := forum.NormalizeTitle(title)
+	if err != nil {
+		return nil, nil, err
+	}
+	body, err = forum.NormalizeBody(body)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := s.BoardByID(boardID); err != nil {
+		return nil, nil, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	ts := now()
+	res, err := tx.Exec(
+		`INSERT INTO threads (board_id, title, author_id, created_at, last_post_at) VALUES (?, ?, ?, ?, ?)`,
+		boardID, title, authorID, ts, ts,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	threadID, err := res.LastInsertId()
+	if err != nil {
+		return nil, nil, err
+	}
+	pres, err := tx.Exec(
+		`INSERT INTO posts (thread_id, author_id, floor, body_markdown, created_at) VALUES (?, ?, ?, ?, ?)`,
+		threadID, authorID, forum.FirstFloor, body, ts,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	postID, err := pres.LastInsertId()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	th := &forum.Thread{
+		ID:         threadID,
+		BoardID:    boardID,
+		Title:      title,
+		AuthorID:   authorID,
+		CreatedAt:  parseTime(ts),
+		LastPostAt: parseTime(ts),
+	}
+	p := &forum.Post{
+		ID:           postID,
+		ThreadID:     threadID,
+		AuthorID:     authorID,
+		Floor:        forum.FirstFloor,
+		BodyMarkdown: body,
+		CreatedAt:    parseTime(ts),
+	}
+	return th, p, nil
+}
+
+func (s *Store) ListThreads(boardID int64) ([]forum.ThreadView, error) {
+	rows, err := s.db.Query(`
+		SELECT t.id, t.board_id, t.title, t.author_id, t.created_at, t.last_post_at,
+		       m.login_name, m.display_name
+		FROM threads t
+		JOIN members m ON m.id = t.author_id
+		WHERE t.board_id = ?
+		ORDER BY t.last_post_at DESC, t.id DESC
+	`, boardID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []forum.ThreadView
+	for rows.Next() {
+		var v forum.ThreadView
+		var created, last string
+		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &v.AuthorLoginName, &v.AuthorDisplayName); err != nil {
+			return nil, err
+		}
+		v.CreatedAt = parseTime(created)
+		v.LastPostAt = parseTime(last)
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ThreadByID(id int64) (*forum.Thread, error) {
+	var th forum.Thread
+	var created, last string
+	err := s.db.QueryRow(
+		`SELECT id, board_id, title, author_id, created_at, last_post_at FROM threads WHERE id = ?`,
+		id,
+	).Scan(&th.ID, &th.BoardID, &th.Title, &th.AuthorID, &created, &last)
+	if err == sql.ErrNoRows {
+		return nil, forum.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	th.CreatedAt = parseTime(created)
+	th.LastPostAt = parseTime(last)
+	return &th, nil
+}
+
+func (s *Store) CreatePost(threadID, authorID int64, body string) (*forum.Post, error) {
+	body, err := forum.NormalizeBody(body)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var lastFloor int
+	err = tx.QueryRow(`SELECT COALESCE(MAX(floor), 0) FROM posts WHERE thread_id = ?`, threadID).Scan(&lastFloor)
+	if err != nil {
+		return nil, err
+	}
+	if lastFloor == 0 {
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM threads WHERE id = ?`, threadID).Scan(&n); err != nil {
+			return nil, err
+		}
+		if n == 0 {
+			return nil, forum.ErrNotFound
+		}
+	}
+	floor := forum.NextFloor(lastFloor)
+	ts := now()
+	res, err := tx.Exec(
+		`INSERT INTO posts (thread_id, author_id, floor, body_markdown, created_at) VALUES (?, ?, ?, ?, ?)`,
+		threadID, authorID, floor, body, ts,
+	)
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`UPDATE threads SET last_post_at = ? WHERE id = ?`, ts, threadID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &forum.Post{
+		ID:           id,
+		ThreadID:     threadID,
+		AuthorID:     authorID,
+		Floor:        floor,
+		BodyMarkdown: body,
+		CreatedAt:    parseTime(ts),
+	}, nil
+}
+
+func (s *Store) ListPosts(threadID int64) ([]forum.PostView, error) {
+	rows, err := s.db.Query(`
+		SELECT p.id, p.thread_id, p.author_id, p.floor, p.body_markdown, p.created_at,
+		       m.login_name, m.display_name, m.role
+		FROM posts p
+		JOIN members m ON m.id = p.author_id
+		WHERE p.thread_id = ?
+		ORDER BY p.floor ASC
+	`, threadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []forum.PostView
+	for rows.Next() {
+		var v forum.PostView
+		var created, role string
+		if err := rows.Scan(&v.ID, &v.ThreadID, &v.AuthorID, &v.Floor, &v.BodyMarkdown, &created, &v.AuthorLoginName, &v.AuthorDisplayName, &role); err != nil {
+			return nil, err
+		}
+		v.CreatedAt = parseTime(created)
+		v.AuthorRole = forum.Role(role)
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}

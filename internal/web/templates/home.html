@@ -1,0 +1,14 @@
+{{define "title"}}版块{{end}}
+{{define "content"}}
+<h1>版块</h1>
+{{if .CanCreateBoard}}<p><a href="/boards/new">新建版块</a></p>{{end}}
+{{if not .Boards}}<p class="muted">还没有版块。</p>{{end}}
+<ul class="boards">
+{{range .Boards}}
+  <li>
+    <a href="/boards/{{.ID}}">{{.Name}}</a>
+    {{if .Description}}<span class="muted">{{.Description}}</span>{{end}}
+  </li>
+{{end}}
+</ul>
+{{end}}

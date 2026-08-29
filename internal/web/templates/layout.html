@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{block "title" .}}论坛{{end}}</title>
+<link rel="stylesheet" href="/static/forum.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">论坛</a>
+  {{if .Member}}
+  <nav>
+    <span class="who">{{.Member.DisplayName}} <b class="login">{{.Member.LoginName}}</b>{{if .RoleLabel}} <span class="badge">{{.RoleLabel}}</span>{{end}}</span>
+    <form class="inline" method="post" action="/logout"><button type="submit">登出</button></form>
+  </nav>
+  {{end}}
+</header>
+<main>
+{{block "content" .}}{{end}}
+</main>
+</body>
+</html>
