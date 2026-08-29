@@ -1,5 +1,7 @@
 # Go-Forum
 
+[![CI](https://github.com/klzw2233/Go-Forum/actions/workflows/ci.yml/badge.svg)](https://github.com/klzw2233/Go-Forum/actions/workflows/ci.yml)
+
 熟人封闭传统 BBS。一个站点、一群互相认识的人。未登录什么都看不见。
 
 领域语言见 [CONTEXT.md](CONTEXT.md)。第一刀只做发帖闭环，范围见 [docs/adr/0002-v1-scope.md](docs/adr/0002-v1-scope.md)。
@@ -23,9 +25,13 @@ copy forum.example.toml forum.toml
 编辑 `forum.toml`：把 `founder.password` 改成你自己的密码。`forum.toml` 和 `forum.db` 不会进 git。
 
 ```text
+gofmt -l .
+go vet ./...
 go test ./...
 go run ./cmd/forum
 ```
+
+推送到 GitHub 后，Actions 会再跑一遍 `gofmt` / `go vet` / `go test`（见 `.github/workflows/ci.yml`）。
 
 浏览器打开 <http://127.0.0.1:8080>，用配置里的登录名和密码登录。
 

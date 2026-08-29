@@ -56,6 +56,6 @@ If the human is still doing the work, their habits still apply to them.
 
 - **Tech Stack**: Go 1.26, std `net/http` + `html/template`, SQLite via `modernc.org/sqlite`, module `go-forum`. No CGO.
 - **Entrypoints**: `cmd/forum/main.go` — load `forum.toml`, open SQLite, ensure founder, listen HTTP.
-- **Ground Truth**: `main` is source of truth. Work on feature branches. `go test ./...` is the local exit condition; there is no CI yet.
+- **Ground Truth**: `main` is source of truth. Work on feature branches. Local exit condition is `go test ./...` (plus `gofmt` and `go vet`). GitHub Actions (`.github/workflows/ci.yml`) is the remote exit condition: if local is green and CI is red, CI wins.
 - **Critical Path**: Logged-in member opens a board, starts a thread, replies, and sees Markdown (including http(s) image URLs) immediately. Unauthenticated visitors see only the login page.
 - **Documentation**: `README.md` (how to run), `CONTEXT.md` (glossary), `docs/adr/` (hard decisions), `notes/` (config and usage notes).
