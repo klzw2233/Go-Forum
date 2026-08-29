@@ -99,10 +99,15 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
-	if _, err := db.Exec(`ALTER TABLE posts ADD COLUMN edited_at TEXT`); err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-			_ = db.Close()
-			return nil, fmt.Errorf("migrate posts.edited_at: %w", err)
+	for _, stmt := range []string{
+		`ALTER TABLE posts ADD COLUMN edited_at TEXT`,
+		`ALTER TABLE posts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate: %w", err)
+			}
 		}
 	}
 	return &Store{db: db}, nil
@@ -345,15 +350,17 @@ func (s *Store) CreateThread(boardID, authorID int64, title, body string) (*foru
 	return th, p, nil
 }
 
-func (s *Store) ListThreads(boardID int64) ([]forum.ThreadView, error) {
-	rows, err := s.db.Query(`
+func (s *Store) ListThreads(boardID int64, viewer *forum.Member) ([]forum.ThreadView, error) {
+	q := `
 		SELECT t.id, t.board_id, t.title, t.author_id, t.created_at, t.last_post_at,
-		       m.login_name, m.display_name
+		       m.login_name, m.display_name,
+		       COALESCE((SELECT p.hidden FROM posts p WHERE p.thread_id = t.id AND p.floor = 1), 0)
 		FROM threads t
 		JOIN members m ON m.id = t.author_id
 		WHERE t.board_id = ?
 		ORDER BY t.last_post_at DESC, t.id DESC
-	`, boardID)
+	`
+	rows, err := s.db.Query(q, boardID)
 	if err != nil {
 		return nil, err
 	}
@@ -362,11 +369,16 @@ func (s *Store) ListThreads(boardID int64) ([]forum.ThreadView, error) {
 	for rows.Next() {
 		var v forum.ThreadView
 		var created, last string
-		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &v.AuthorLoginName, &v.AuthorDisplayName); err != nil {
+		var hidden int
+		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden); err != nil {
 			return nil, err
 		}
 		v.CreatedAt = parseTime(created)
 		v.LastPostAt = parseTime(last)
+		v.FirstHidden = hidden != 0
+		if v.FirstHidden && !forum.CanHidePost(viewer) {
+			continue
+		}
 		out = append(out, v)
 	}
 	return out, rows.Err()
@@ -394,6 +406,19 @@ func (s *Store) CreatePost(threadID, authorID int64, body string) (*forum.Post, 
 	body, err := forum.NormalizeBody(body)
 	if err != nil {
 		return nil, err
+	}
+	posts, err := s.ListPosts(threadID)
+	if err != nil {
+		return nil, err
+	}
+	if forum.ThreadHiddenFromMembers(posts) {
+		actor, aerr := s.MemberByID(authorID)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if !forum.CanHidePost(actor) {
+			return nil, forum.ErrCannotReply
+		}
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -446,7 +471,7 @@ func (s *Store) CreatePost(threadID, authorID int64, body string) (*forum.Post, 
 
 func (s *Store) ListPosts(threadID int64) ([]forum.PostView, error) {
 	rows, err := s.db.Query(`
-		SELECT p.id, p.thread_id, p.author_id, p.floor, p.body_markdown, p.created_at, p.edited_at,
+		SELECT p.id, p.thread_id, p.author_id, p.floor, p.body_markdown, p.created_at, p.edited_at, p.hidden,
 		       m.login_name, m.display_name, m.role
 		FROM posts p
 		JOIN members m ON m.id = p.author_id
@@ -462,7 +487,8 @@ func (s *Store) ListPosts(threadID int64) ([]forum.PostView, error) {
 		var v forum.PostView
 		var created, role string
 		var edited sql.NullString
-		if err := rows.Scan(&v.ID, &v.ThreadID, &v.AuthorID, &v.Floor, &v.BodyMarkdown, &created, &edited, &v.AuthorLoginName, &v.AuthorDisplayName, &role); err != nil {
+		var hidden int
+		if err := rows.Scan(&v.ID, &v.ThreadID, &v.AuthorID, &v.Floor, &v.BodyMarkdown, &created, &edited, &hidden, &v.AuthorLoginName, &v.AuthorDisplayName, &role); err != nil {
 			return nil, err
 		}
 		v.CreatedAt = parseTime(created)
@@ -470,6 +496,7 @@ func (s *Store) ListPosts(threadID int64) ([]forum.PostView, error) {
 			t := parseTime(edited.String)
 			v.EditedAt = &t
 		}
+		v.Hidden = hidden != 0
 		v.AuthorRole = forum.Role(role)
 		out = append(out, v)
 	}

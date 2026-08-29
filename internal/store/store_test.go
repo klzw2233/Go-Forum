@@ -282,3 +282,93 @@ func TestUpdatePostKeepsLastPostAtAndHistory(t *testing.T) {
 		t.Fatalf("other: %v", err)
 	}
 }
+
+func TestHidePostAndThreadList(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("hunter2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := s.IssueInvite(f, "hidecodeaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = inv
+	mem, err := s.Register("hidecodeaaaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, _, err := s.CreateThread(b.ID, mem.ID, "可见主题", "一楼")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := s.CreatePost(th.ID, mem.ID, "二楼秘密")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetPostHidden(mem, p2.ID, true); err != forum.ErrCannotHidePost {
+		t.Fatalf("member hide: %v", err)
+	}
+	got, err := s.SetPostHidden(f, p2.ID, true)
+	if err != nil || !got.Hidden {
+		t.Fatalf("hide 2: %+v %v", got, err)
+	}
+	posts, err := s.ListPosts(th.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !posts[1].Hidden || posts[1].BodyMarkdown != "二楼秘密" {
+		t.Fatalf("%+v", posts[1])
+	}
+	if _, err := s.UpdatePost(mem, p2.ID, "改藏着的"); err != forum.ErrCannotEditPost {
+		t.Fatalf("edit hidden: %v", err)
+	}
+
+	th2, _, err := s.CreateThread(b.ID, mem.ID, "藏起来的主题", "不该给会员看")
+	if err != nil {
+		t.Fatal(err)
+	}
+	posts2, err := s.ListPosts(th2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetPostHidden(f, posts2[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := s.ListThreads(b.ID, mem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tview := range listed {
+		if tview.Title == "藏起来的主题" {
+			t.Fatal("member saw hidden thread")
+		}
+	}
+	staffList, err := s.ListThreads(b.ID, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saw bool
+	for _, tview := range staffList {
+		if tview.Title == "藏起来的主题" {
+			saw = true
+			if !tview.FirstHidden {
+				t.Fatal("staff list missing FirstHidden")
+			}
+		}
+	}
+	if !saw {
+		t.Fatal("founder must see hidden thread")
+	}
+	if _, err := s.CreatePost(th2.ID, mem.ID, "会员回"); err != forum.ErrCannotReply {
+		t.Fatalf("member reply hidden thread: %v", err)
+	}
+	if _, err := s.CreatePost(th2.ID, f.ID, "创始人回"); err != nil {
+		t.Fatal(err)
+	}
+}

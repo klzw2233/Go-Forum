@@ -65,6 +65,8 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("GET /posts/{id}/edit", s.requireMember(s.getPostEdit))
 	s.mux.HandleFunc("POST /posts/{id}/edit", s.requireMember(s.postPostEdit))
 	s.mux.HandleFunc("GET /posts/{id}/edits", s.requireMember(s.getPostEdits))
+	s.mux.HandleFunc("POST /posts/{id}/hide", s.requireMember(s.postHide))
+	s.mux.HandleFunc("POST /posts/{id}/unhide", s.requireMember(s.postUnhide))
 	return s, nil
 }
 
@@ -89,6 +91,8 @@ type page struct {
 	Post           *forum.Post
 	Edits          []editVM
 	CanViewEdits   bool
+	CanHide        bool
+	ThreadHidden   bool
 }
 
 type postVM struct {
@@ -97,6 +101,7 @@ type postVM struct {
 	RoleLabel   string
 	CanEdit     bool
 	EditedLabel string
+	ShowBody    bool
 }
 
 type editVM struct {
@@ -139,6 +144,7 @@ func (s *Server) render(w http.ResponseWriter, name string, p page) {
 		p.CanCreateBoard = forum.CanCreateBoard(p.Member)
 		p.CanIssueInvite = forum.CanIssueInvite(p.Member)
 		p.CanViewEdits = forum.CanViewEdits(p.Member)
+		p.CanHide = forum.CanHidePost(p.Member)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout.html", p); err != nil {
@@ -342,7 +348,7 @@ func (s *Server) getBoard(w http.ResponseWriter, r *http.Request, m *forum.Membe
 		http.NotFound(w, r)
 		return
 	}
-	threads, err := s.store.ListThreads(id)
+	threads, err := s.store.ListThreads(id, m)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -408,7 +414,12 @@ func (s *Server) getThread(w http.ResponseWriter, r *http.Request, m *forum.Memb
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts)})
+	hidden := forum.ThreadHiddenFromMembers(posts)
+	if hidden && !forum.CanHidePost(m) {
+		s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, ThreadHidden: true})
+		return
+	}
+	s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts), ThreadHidden: hidden})
 }
 
 func (s *Server) postReply(w http.ResponseWriter, r *http.Request, m *forum.Member) {
@@ -424,6 +435,16 @@ func (s *Server) postReply(w http.ResponseWriter, r *http.Request, m *forum.Memb
 	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "form", http.StatusBadRequest)
+		return
+	}
+	existing, lerr := s.store.ListPosts(th.ID)
+	if lerr != nil {
+		http.Error(w, lerr.Error(), http.StatusInternalServerError)
+		return
+	}
+	if forum.ThreadHiddenFromMembers(existing) && !forum.CanHidePost(m) {
+		b, _ := s.store.BoardByID(th.BoardID)
+		s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, ThreadHidden: true})
 		return
 	}
 	if _, err := s.store.CreatePost(th.ID, m.ID, r.FormValue("body")); err != nil {
@@ -478,6 +499,10 @@ func publicErr(err error) string {
 		return "不能查看编辑历史"
 	case forum.ErrBodyEmpty:
 		return "正文不能为空"
+	case forum.ErrCannotHidePost:
+		return "不能隐藏这篇帖"
+	case forum.ErrCannotReply:
+		return "不能回复这篇主题"
 	default:
 		return err.Error()
 	}
@@ -485,19 +510,54 @@ func publicErr(err error) string {
 
 func postVMs(m *forum.Member, posts []forum.PostView) []postVM {
 	vms := make([]postVM, 0, len(posts))
+	staff := forum.CanHidePost(m)
 	for _, p := range posts {
+		show := staff || !p.Hidden
 		vm := postVM{
 			PostView:  p,
-			BodyHTML:  template.HTML(markdown.Render(p.BodyMarkdown)),
 			RoleLabel: forum.RoleLabel(p.AuthorRole),
 			CanEdit:   forum.CanEditPost(m, &p.Post),
+			ShowBody:  show,
 		}
-		if p.EditedAt != nil {
-			vm.EditedLabel = "已编辑 " + forum.FormatTimeUTC(*p.EditedAt) + " UTC"
+		if show {
+			vm.BodyHTML = template.HTML(markdown.Render(p.BodyMarkdown))
+			if p.EditedAt != nil {
+				vm.EditedLabel = "已编辑 " + forum.FormatTimeUTC(*p.EditedAt) + " UTC"
+			}
 		}
 		vms = append(vms, vm)
 	}
 	return vms
+}
+
+func (s *Server) postHide(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.setHidden(w, r, m, true)
+}
+
+func (s *Server) postUnhide(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.setHidden(w, r, m, false)
+}
+
+func (s *Server) setHidden(w http.ResponseWriter, r *http.Request, m *forum.Member, hidden bool) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	p, err := s.store.SetPostHidden(m, id, hidden)
+	if err != nil {
+		if err == forum.ErrCannotHidePost {
+			http.Error(w, "不能隐藏这篇帖", http.StatusForbidden)
+			return
+		}
+		if err == forum.ErrNotFound {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/threads/"+strconv.FormatInt(p.ThreadID, 10)+"#floor-"+strconv.Itoa(p.Floor), http.StatusSeeOther)
 }
 
 func (s *Server) getPostEdit(w http.ResponseWriter, r *http.Request, m *forum.Member) {
