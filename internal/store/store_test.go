@@ -434,3 +434,80 @@ func TestUpdateThreadTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPinOrderAndMove(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "pincodeaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("pincodeaaaaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _, err := s.CreateThread(b.ID, f.ID, "A", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bb, _, err := s.CreateThread(b.ID, f.ID, "B", "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cc, _, err := s.CreateThread(b.ID, f.ID, "C", "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PinThread(mem, bb.ID); err != forum.ErrCannotPin {
+		t.Fatalf("member pin: %v", err)
+	}
+	if _, err := s.PinThread(f, bb.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PinThread(f, cc.ID); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := s.ListThreads(b.ID, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) < 3 || listed[0].Title != "B" || listed[1].Title != "C" || listed[2].Title != "A" {
+		t.Fatalf("order after pin B then C: %+v", titles(listed))
+	}
+	if _, err := s.MovePinned(f, cc.ID, -1); err != nil {
+		t.Fatal(err)
+	}
+	listed, err = s.ListThreads(b.ID, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed[0].Title != "C" || listed[1].Title != "B" {
+		t.Fatalf("after move C up: %+v", titles(listed))
+	}
+	if _, err := s.UnpinThread(f, bb.ID); err != nil {
+		t.Fatal(err)
+	}
+	listed, err = s.ListThreads(b.ID, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed[0].Title != "C" || listed[1].Title != "B" || listed[2].Title != "A" {
+		t.Fatalf("after unpin B: %+v", titles(listed))
+	}
+	_ = a
+}
+
+func titles(in []forum.ThreadView) []string {
+	out := make([]string, len(in))
+	for i, t := range in {
+		out[i] = t.Title
+	}
+	return out
+}

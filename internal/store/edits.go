@@ -161,3 +161,87 @@ func (s *Store) UpdateThreadTitle(actor *forum.Member, threadID int64, newTitle 
 	th.TitleEditedAt = &t
 	return th, nil
 }
+
+func (s *Store) PinThread(actor *forum.Member, threadID int64) (*forum.Thread, error) {
+	if !forum.CanPin(actor) {
+		return nil, forum.ErrCannotPin
+	}
+	th, err := s.ThreadByID(threadID)
+	if err != nil {
+		return nil, err
+	}
+	if th.Pinned() {
+		return th, nil
+	}
+	var maxRank int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(pin_rank), 0) FROM threads WHERE board_id = ?`, th.BoardID).Scan(&maxRank); err != nil {
+		return nil, err
+	}
+	rank := maxRank + 1
+	if _, err := s.db.Exec(`UPDATE threads SET pin_rank = ? WHERE id = ?`, rank, threadID); err != nil {
+		return nil, err
+	}
+	th.PinRank = rank
+	return th, nil
+}
+
+func (s *Store) UnpinThread(actor *forum.Member, threadID int64) (*forum.Thread, error) {
+	if !forum.CanPin(actor) {
+		return nil, forum.ErrCannotPin
+	}
+	th, err := s.ThreadByID(threadID)
+	if err != nil {
+		return nil, err
+	}
+	if !th.Pinned() {
+		return th, nil
+	}
+	if _, err := s.db.Exec(`UPDATE threads SET pin_rank = 0 WHERE id = ?`, threadID); err != nil {
+		return nil, err
+	}
+	th.PinRank = 0
+	return th, nil
+}
+
+func (s *Store) MovePinned(actor *forum.Member, threadID int64, delta int) (*forum.Thread, error) {
+	if !forum.CanPin(actor) {
+		return nil, forum.ErrCannotPin
+	}
+	if delta != -1 && delta != 1 {
+		return s.ThreadByID(threadID)
+	}
+	th, err := s.ThreadByID(threadID)
+	if err != nil {
+		return nil, err
+	}
+	if !th.Pinned() {
+		return th, nil
+	}
+	var otherID int64
+	var otherRank int
+	q := `SELECT id, pin_rank FROM threads WHERE board_id = ? AND pin_rank > 0 AND pin_rank < ? ORDER BY pin_rank DESC LIMIT 1`
+	if delta > 0 {
+		q = `SELECT id, pin_rank FROM threads WHERE board_id = ? AND pin_rank > 0 AND pin_rank > ? ORDER BY pin_rank ASC LIMIT 1`
+	}
+	arg := th.PinRank
+	err = s.db.QueryRow(q, th.BoardID, arg).Scan(&otherID, &otherRank)
+	if err != nil {
+		return th, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE threads SET pin_rank = ? WHERE id = ?`, otherRank, th.ID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`UPDATE threads SET pin_rank = ? WHERE id = ?`, th.PinRank, otherID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	th.PinRank = otherRank
+	return th, nil
+}

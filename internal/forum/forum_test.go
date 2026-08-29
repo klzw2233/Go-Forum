@@ -183,3 +183,12 @@ func TestCanEditTitle(t *testing.T) {
 		t.Fatal("operator")
 	}
 }
+
+func TestCanPin(t *testing.T) {
+	if CanPin(nil) || CanPin(&Member{Role: RoleMember}) {
+		t.Fatal("member must not pin")
+	}
+	if !CanPin(&Member{Role: RoleOperator}) || !CanPin(&Member{Role: RoleFounder}) {
+		t.Fatal("staff must pin")
+	}
+}

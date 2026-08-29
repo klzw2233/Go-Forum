@@ -51,6 +51,7 @@ var (
 	ErrCannotHidePost    = errors.New("cannot hide this post")
 	ErrCannotReply       = errors.New("cannot reply to this thread")
 	ErrCannotEditTitle   = errors.New("cannot edit this title")
+	ErrCannotPin         = errors.New("cannot pin threads")
 )
 
 type Member struct {
@@ -77,6 +78,7 @@ type Thread struct {
 	CreatedAt     time.Time
 	LastPostAt    time.Time
 	TitleEditedAt *time.Time
+	PinRank       int
 }
 
 type Post struct {
@@ -245,6 +247,14 @@ func CanEditTitle(m *Member, th *Thread, firstFloorHidden bool) bool {
 		return true
 	}
 	return m.ID == th.AuthorID && !firstFloorHidden
+}
+
+func CanPin(m *Member) bool {
+	return CanHidePost(m)
+}
+
+func (t Thread) Pinned() bool {
+	return t.PinRank > 0
 }
 
 func InviteUsable(c *InviteCode) error {
