@@ -1,0 +1,8 @@
+/forum.db
+/forum.db-shm
+/forum.db-wal
+/forum.toml
+*.exe
+/tmp/
+.DS_Store
+Thumbs.db
