@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"go-forum/internal/forum"
@@ -59,6 +60,16 @@ CREATE TABLE IF NOT EXISTS posts (
 CREATE INDEX IF NOT EXISTS idx_threads_board_last ON threads(board_id, last_post_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_thread_floor ON posts(thread_id, floor);
 CREATE INDEX IF NOT EXISTS idx_sessions_member ON sessions(member_id);
+
+CREATE TABLE IF NOT EXISTS invite_codes (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	code TEXT NOT NULL UNIQUE,
+	issued_by INTEGER NOT NULL REFERENCES members(id),
+	issued_at TEXT NOT NULL,
+	revoked INTEGER NOT NULL DEFAULT 0,
+	used_by_login TEXT,
+	used_at TEXT
+);
 `
 
 type Store struct {
@@ -445,4 +456,197 @@ func (s *Store) ListPosts(threadID int64) ([]forum.PostView, error) {
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func scanInvite(scanner interface {
+	Scan(dest ...any) error
+}) (forum.InviteCode, error) {
+	var c forum.InviteCode
+	var issued string
+	var revoked int
+	var usedLogin, usedAt sql.NullString
+	if err := scanner.Scan(&c.ID, &c.Code, &c.IssuedByID, &c.IssuedByLogin, &issued, &revoked, &usedLogin, &usedAt); err != nil {
+		return c, err
+	}
+	c.IssuedAt = parseTime(issued)
+	c.Revoked = revoked != 0
+	if usedLogin.Valid {
+		c.UsedByLogin = usedLogin.String
+	}
+	if usedAt.Valid {
+		t := parseTime(usedAt.String)
+		c.UsedAt = &t
+	}
+	return c, nil
+}
+
+const inviteSelect = `SELECT i.id, i.code, i.issued_by, m.login_name, i.issued_at, i.revoked, i.used_by_login, i.used_at
+FROM invite_codes i JOIN members m ON m.id = i.issued_by`
+
+func (s *Store) IssueInvite(issuer *forum.Member, code string) (*forum.InviteCode, error) {
+	if !forum.CanIssueInvite(issuer) {
+		return nil, forum.ErrCannotIssueInvite
+	}
+	if code == "" {
+		return nil, forum.ErrInviteInvalid
+	}
+	ts := now()
+	res, err := s.db.Exec(
+		`INSERT INTO invite_codes (code, issued_by, issued_at, revoked) VALUES (?, ?, ?, 0)`,
+		code, issuer.ID, ts,
+	)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			return nil, forum.ErrInviteInvalid
+		}
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	return s.InviteByID(id)
+}
+
+func (s *Store) InviteByCode(code string) (*forum.InviteCode, error) {
+	c, err := scanInvite(s.db.QueryRow(inviteSelect+` WHERE i.code = ?`, code))
+	if err == sql.ErrNoRows {
+		return nil, forum.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (s *Store) InviteByID(id int64) (*forum.InviteCode, error) {
+	c, err := scanInvite(s.db.QueryRow(inviteSelect+` WHERE i.id = ?`, id))
+	if err == sql.ErrNoRows {
+		return nil, forum.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (s *Store) ListInvites() ([]forum.InviteCode, error) {
+	rows, err := s.db.Query(inviteSelect + ` ORDER BY i.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []forum.InviteCode
+	for rows.Next() {
+		c, err := scanInvite(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RevokeInvite(actor *forum.Member, id int64) error {
+	if !forum.CanIssueInvite(actor) {
+		return forum.ErrCannotIssueInvite
+	}
+	c, err := s.InviteByID(id)
+	if err != nil {
+		return err
+	}
+	if err := forum.InviteUsable(c); err != nil {
+		return err
+	}
+	res, err := s.db.Exec(`UPDATE invite_codes SET revoked = 1 WHERE id = ? AND revoked = 0 AND used_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return forum.ErrInviteUsed
+	}
+	return nil
+}
+
+func (s *Store) Register(code, loginName, displayName, passwordHash string) (*forum.Member, error) {
+	if !forum.ValidLoginName(loginName) {
+		return nil, forum.ErrInvalidLoginName
+	}
+	displayName, err := forum.NormalizeDisplayName(displayName)
+	if err != nil {
+		return nil, err
+	}
+	if passwordHash == "" {
+		return nil, forum.ErrPasswordEmpty
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var invID int64
+	var revoked int
+	var usedLogin sql.NullString
+	err = tx.QueryRow(
+		`SELECT id, revoked, used_by_login FROM invite_codes WHERE code = ?`,
+		code,
+	).Scan(&invID, &revoked, &usedLogin)
+	if err == sql.ErrNoRows {
+		return nil, forum.ErrInviteInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+	inv := &forum.InviteCode{ID: invID, Revoked: revoked != 0}
+	if usedLogin.Valid {
+		inv.UsedByLogin = usedLogin.String
+	}
+	if err := forum.InviteUsable(inv); err != nil {
+		return nil, err
+	}
+
+	var exists int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM members WHERE login_name = ?`, loginName).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists > 0 {
+		return nil, forum.ErrLoginNameTaken
+	}
+
+	ts := now()
+	res, err := tx.Exec(
+		`INSERT INTO members (login_name, display_name, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)`,
+		loginName, displayName, passwordHash, string(forum.RoleMember), ts,
+	)
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	r, err := tx.Exec(
+		`UPDATE invite_codes SET used_by_login = ?, used_at = ? WHERE id = ? AND revoked = 0 AND used_at IS NULL`,
+		loginName, ts, invID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	n, err := r.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n != 1 {
+		return nil, forum.ErrInviteUsed
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.MemberByID(id)
 }

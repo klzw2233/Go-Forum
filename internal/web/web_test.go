@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -64,11 +65,28 @@ func follow(t *testing.T, client *http.Client, res *http.Response) *http.Respons
 	}
 	loc := res.Header.Get("Location")
 	res.Body.Close()
-	next, err := client.Get(res.Request.URL.ResolveReference(&url.URL{Path: loc}).String())
+	ref, err := url.Parse(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := client.Get(res.Request.URL.ResolveReference(ref).String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return next
+}
+
+func loginFounder(t *testing.T, ts *httptest.Server, client *http.Client) {
+	t.Helper()
+	res, err := client.PostForm(ts.URL+"/login", url.Values{
+		"login_name": {"jimmy"},
+		"password":   {"secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
 }
 
 func TestUnauthenticatedHomeRedirectsToLogin(t *testing.T) {
@@ -83,6 +101,21 @@ func TestUnauthenticatedHomeRedirectsToLogin(t *testing.T) {
 	}
 	if loc := res.Header.Get("Location"); loc != "/login" {
 		t.Fatalf("location %q", loc)
+	}
+}
+
+func TestRegisterPageOpenAndPrefill(t *testing.T) {
+	ts, client := testServer(t)
+	res, err := client.Get(ts.URL + "/register?code=abcXYZ123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readBody(t, res)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d %s", res.StatusCode, body)
+	}
+	if !strings.Contains(body, `value="abcXYZ123456"`) {
+		t.Fatalf("code not prefilled: %s", body)
 	}
 }
 
@@ -156,5 +189,111 @@ func TestPostingLoopAndExternalImage(t *testing.T) {
 	}
 	if !strings.Contains(body, "#1") || !strings.Contains(body, "#2") {
 		t.Fatalf("floor numbers missing: %s", body)
+	}
+}
+
+func TestInviteRegisterAndMemberCannotIssue(t *testing.T) {
+	ts, client := testServer(t)
+	loginFounder(t, ts, client)
+
+	res, err := client.PostForm(ts.URL+"/invites", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body := readBody(t, res)
+	re := regexp.MustCompile(`刚发出：<code class="invite">([^<]+)</code>`)
+	m := re.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("new code missing: %s", body)
+	}
+	code := m[1]
+	if len(code) != 12 {
+		t.Fatalf("code length %d %q", len(code), code)
+	}
+
+	res, err = client.PostForm(ts.URL+"/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+
+	res, err = client.PostForm(ts.URL+"/register", url.Values{
+		"code":         {code},
+		"login_name":   {"wang"},
+		"display_name": {"老王"},
+		"password":     {"hunter2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body = readBody(t, res)
+	if !strings.Contains(body, "版块") {
+		t.Fatalf("after register: %s", body)
+	}
+	if !strings.Contains(body, "老王") {
+		t.Fatalf("display name missing: %s", body)
+	}
+
+	res, err = client.PostForm(ts.URL+"/invites", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member issue status %d", res.StatusCode)
+	}
+}
+
+func TestRevokedInviteCannotRegister(t *testing.T) {
+	ts, client := testServer(t)
+	loginFounder(t, ts, client)
+
+	res, err := client.PostForm(ts.URL+"/invites", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body := readBody(t, res)
+	re := regexp.MustCompile(`/invites/(\d+)/revoke`)
+	m := re.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("revoke form missing: %s", body)
+	}
+	codeRe := regexp.MustCompile(`刚发出：<code class="invite">([^<]+)</code>`)
+	cm := codeRe.FindStringSubmatch(body)
+	if cm == nil {
+		t.Fatalf("code missing: %s", body)
+	}
+	code := cm[1]
+
+	res, err = client.PostForm(ts.URL+"/invites/"+m[1]+"/revoke", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+
+	res, err = client.PostForm(ts.URL+"/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+
+	res, err = client.PostForm(ts.URL+"/register", url.Values{
+		"code":         {code},
+		"login_name":   {"zhao"},
+		"display_name": {"赵"},
+		"password":     {"hunter2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	if !strings.Contains(body, "邀请码已作废") {
+		t.Fatalf("expected revoked message: %s", body)
 	}
 }

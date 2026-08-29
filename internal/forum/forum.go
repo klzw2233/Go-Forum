@@ -28,18 +28,24 @@ const (
 )
 
 var (
-	ErrInvalidLoginName = errors.New("invalid login name")
-	ErrDisplayNameEmpty = errors.New("display name is empty")
-	ErrDisplayNameLong  = errors.New("display name is too long")
-	ErrTitleEmpty       = errors.New("title is empty")
-	ErrTitleLong        = errors.New("title is too long")
-	ErrBodyEmpty        = errors.New("body is empty")
-	ErrBodyLong         = errors.New("body is too long")
-	ErrBoardNameEmpty   = errors.New("board name is empty")
-	ErrBoardNameLong    = errors.New("board name is too long")
-	ErrBoardDescLong    = errors.New("board description is too long")
-	ErrNotFound         = errors.New("not found")
-	ErrBadPassword      = errors.New("bad password")
+	ErrInvalidLoginName  = errors.New("invalid login name")
+	ErrDisplayNameEmpty  = errors.New("display name is empty")
+	ErrDisplayNameLong   = errors.New("display name is too long")
+	ErrTitleEmpty        = errors.New("title is empty")
+	ErrTitleLong         = errors.New("title is too long")
+	ErrBodyEmpty         = errors.New("body is empty")
+	ErrBodyLong          = errors.New("body is too long")
+	ErrBoardNameEmpty    = errors.New("board name is empty")
+	ErrBoardNameLong     = errors.New("board name is too long")
+	ErrBoardDescLong     = errors.New("board description is too long")
+	ErrNotFound          = errors.New("not found")
+	ErrBadPassword       = errors.New("bad password")
+	ErrPasswordEmpty     = errors.New("password is empty")
+	ErrLoginNameTaken    = errors.New("login name is taken")
+	ErrInviteInvalid     = errors.New("invite code is invalid")
+	ErrInviteRevoked     = errors.New("invite code is revoked")
+	ErrInviteUsed        = errors.New("invite code is already used")
+	ErrCannotIssueInvite = errors.New("cannot issue invite codes")
 )
 
 type Member struct {
@@ -87,6 +93,27 @@ type PostView struct {
 	AuthorLoginName   string
 	AuthorDisplayName string
 	AuthorRole        Role
+}
+
+type InviteCode struct {
+	ID            int64
+	Code          string
+	IssuedByID    int64
+	IssuedByLogin string
+	IssuedAt      time.Time
+	Revoked       bool
+	UsedByLogin   string
+	UsedAt        *time.Time
+}
+
+func (c InviteCode) Status() string {
+	if c.Revoked {
+		return "已作废"
+	}
+	if c.UsedByLogin != "" || c.UsedAt != nil {
+		return "已使用"
+	}
+	return "未使用"
 }
 
 func ValidLoginName(s string) bool {
@@ -167,6 +194,23 @@ func NextFloor(last int) int {
 
 func CanCreateBoard(m *Member) bool {
 	return m != nil && (m.Role == RoleFounder || m.Role == RoleOperator)
+}
+
+func CanIssueInvite(m *Member) bool {
+	return CanCreateBoard(m)
+}
+
+func InviteUsable(c *InviteCode) error {
+	if c == nil {
+		return ErrInviteInvalid
+	}
+	if c.Revoked {
+		return ErrInviteRevoked
+	}
+	if c.UsedByLogin != "" || c.UsedAt != nil {
+		return ErrInviteUsed
+	}
+	return nil
 }
 
 func RoleLabel(r Role) string {

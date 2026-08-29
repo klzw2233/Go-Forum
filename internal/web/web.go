@@ -3,6 +3,7 @@ package web
 import (
 	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"html/template"
@@ -32,7 +33,7 @@ type Server struct {
 
 func New(st *store.Store) (*Server, error) {
 	s := &Server{store: st, mux: http.NewServeMux(), tpl: map[string]*template.Template{}}
-	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html"}
+	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html", "register.html", "invites.html"}
 	for _, p := range pages {
 		t, err := template.ParseFS(embedded, "templates/layout.html", "templates/"+p)
 		if err != nil {
@@ -47,8 +48,13 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
 	s.mux.HandleFunc("GET /login", s.getLogin)
 	s.mux.HandleFunc("POST /login", s.postLogin)
+	s.mux.HandleFunc("GET /register", s.getRegister)
+	s.mux.HandleFunc("POST /register", s.postRegister)
 	s.mux.HandleFunc("POST /logout", s.requireMember(s.postLogout))
 	s.mux.HandleFunc("GET /{$}", s.requireMember(s.getHome))
+	s.mux.HandleFunc("GET /invites", s.requireMember(s.getInvites))
+	s.mux.HandleFunc("POST /invites", s.requireMember(s.postInvites))
+	s.mux.HandleFunc("POST /invites/{id}/revoke", s.requireMember(s.postRevokeInvite))
 	s.mux.HandleFunc("GET /boards/new", s.requireMember(s.getBoardNew))
 	s.mux.HandleFunc("POST /boards/new", s.requireMember(s.postBoardNew))
 	s.mux.HandleFunc("GET /boards/{id}", s.requireMember(s.getBoard))
@@ -67,12 +73,16 @@ type page struct {
 	Member         *forum.Member
 	RoleLabel      string
 	CanCreateBoard bool
+	CanIssueInvite bool
 	Error          string
+	Code           string
 	Boards         []forum.Board
 	Board          *forum.Board
 	Threads        []forum.ThreadView
 	Thread         *forum.Thread
 	Posts          []postVM
+	Invites        []forum.InviteCode
+	NewCode        string
 }
 
 type postVM struct {
@@ -113,11 +123,31 @@ func (s *Server) render(w http.ResponseWriter, name string, p page) {
 	if p.Member != nil {
 		p.RoleLabel = forum.RoleLabel(p.Member.Role)
 		p.CanCreateBoard = forum.CanCreateBoard(p.Member)
+		p.CanIssueInvite = forum.CanIssueInvite(p.Member)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout.html", p); err != nil {
 		log.Printf("template %s: %v", name, err)
 	}
+}
+
+func (s *Server) loginAs(w http.ResponseWriter, m *forum.Member) error {
+	token, err := newToken()
+	if err != nil {
+		return err
+	}
+	if err := s.store.CreateSession(m.ID, token, time.Now().Add(sessionTTL)); err != nil {
+		return err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(sessionTTL.Seconds()),
+	})
+	return nil
 }
 
 func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
@@ -140,23 +170,48 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "login.html", page{Error: "登录名或密码不对"})
 		return
 	}
-	token, err := newToken()
+	if err := s.loginAs(w, m); err != nil {
+		http.Error(w, "session", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) getRegister(w http.ResponseWriter, r *http.Request) {
+	if s.currentMember(r) != nil {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	s.render(w, "register.html", page{Code: strings.TrimSpace(r.URL.Query().Get("code"))})
+}
+
+func (s *Server) postRegister(w http.ResponseWriter, r *http.Request) {
+	if s.currentMember(r) != nil {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.render(w, "register.html", page{Error: "表单无效"})
+		return
+	}
+	code := strings.TrimSpace(r.FormValue("code"))
+	login := strings.TrimSpace(r.FormValue("login_name"))
+	display := r.FormValue("display_name")
+	pass := r.FormValue("password")
+	hash, err := forum.HashPassword(pass)
 	if err != nil {
+		s.render(w, "register.html", page{Code: code, Error: publicErr(err)})
+		return
+	}
+	m, err := s.store.Register(code, login, display, hash)
+	if err != nil {
+		s.render(w, "register.html", page{Code: code, Error: publicErr(err)})
+		return
+	}
+	if err := s.loginAs(w, m); err != nil {
 		http.Error(w, "session", http.StatusInternalServerError)
 		return
 	}
-	if err := s.store.CreateSession(m.ID, token, time.Now().Add(sessionTTL)); err != nil {
-		http.Error(w, "session", http.StatusInternalServerError)
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(sessionTTL.Seconds()),
-	})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -175,6 +230,65 @@ func (s *Server) getHome(w http.ResponseWriter, r *http.Request, m *forum.Member
 		return
 	}
 	s.render(w, "home.html", page{Member: m, Boards: boards})
+}
+
+func (s *Server) getInvites(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	if !forum.CanIssueInvite(m) {
+		http.Error(w, "只有创始人或运营者能管理邀请码", http.StatusForbidden)
+		return
+	}
+	list, err := s.store.ListInvites()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.render(w, "invites.html", page{Member: m, Invites: list, NewCode: r.URL.Query().Get("new")})
+}
+
+func (s *Server) postInvites(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	if !forum.CanIssueInvite(m) {
+		http.Error(w, "只有创始人或运营者能管理邀请码", http.StatusForbidden)
+		return
+	}
+	var inv *forum.InviteCode
+	var err error
+	for i := 0; i < 5; i++ {
+		code, genErr := newInviteCode()
+		if genErr != nil {
+			http.Error(w, "invite", http.StatusInternalServerError)
+			return
+		}
+		inv, err = s.store.IssueInvite(m, code)
+		if err == nil {
+			break
+		}
+		if err != forum.ErrInviteInvalid {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if err != nil {
+		http.Error(w, "invite", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/invites?new="+inv.Code, http.StatusSeeOther)
+}
+
+func (s *Server) postRevokeInvite(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	if !forum.CanIssueInvite(m) {
+		http.Error(w, "只有创始人或运营者能管理邀请码", http.StatusForbidden)
+		return
+	}
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.store.RevokeInvite(m, id); err != nil {
+		http.Error(w, publicErr(err), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/invites", http.StatusSeeOther)
 }
 
 func (s *Server) getBoardNew(w http.ResponseWriter, r *http.Request, m *forum.Member) {
@@ -333,4 +447,33 @@ func newToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b[:]), nil
+}
+
+func newInviteCode() (string, error) {
+	var b [9]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
+func publicErr(err error) string {
+	switch err {
+	case forum.ErrInviteInvalid, forum.ErrNotFound:
+		return "邀请码无效"
+	case forum.ErrInviteRevoked:
+		return "邀请码已作废"
+	case forum.ErrInviteUsed:
+		return "邀请码已使用"
+	case forum.ErrLoginNameTaken:
+		return "登录名已被占用"
+	case forum.ErrInvalidLoginName:
+		return "登录名不合法"
+	case forum.ErrDisplayNameEmpty:
+		return "显示名不能为空"
+	case forum.ErrPasswordEmpty, forum.ErrBadPassword:
+		return "密码不能为空"
+	default:
+		return err.Error()
+	}
 }

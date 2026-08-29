@@ -1,0 +1,29 @@
+{{define "title"}}邀请码{{end}}
+{{define "content"}}
+<h1>邀请码</h1>
+{{if .NewCode}}<p>刚发出：<code class="invite">{{.NewCode}}</code></p>{{end}}
+<form method="post" action="/invites">
+  <button type="submit">发一张</button>
+</form>
+{{if not .Invites}}<p class="muted">还没有邀请码。</p>{{end}}
+<table class="invites">
+  <thead>
+    <tr><th>码</th><th>状态</th><th>发放者</th><th>用者</th><th></th></tr>
+  </thead>
+  <tbody>
+  {{range .Invites}}
+    <tr>
+      <td><code class="invite">{{.Code}}</code></td>
+      <td>{{.Status}}</td>
+      <td>{{.IssuedByLogin}}</td>
+      <td>{{if .UsedByLogin}}{{.UsedByLogin}}{{else}}—{{end}}</td>
+      <td>
+        {{if eq .Status "未使用"}}
+        <form class="inline" method="post" action="/invites/{{.ID}}/revoke"><button type="submit">作废</button></form>
+        {{end}}
+      </td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
