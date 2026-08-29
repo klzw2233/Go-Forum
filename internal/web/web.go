@@ -33,7 +33,7 @@ type Server struct {
 
 func New(st *store.Store) (*Server, error) {
 	s := &Server{store: st, mux: http.NewServeMux(), tpl: map[string]*template.Template{}}
-	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html", "register.html", "invites.html"}
+	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html", "register.html", "invites.html", "post_edit.html", "post_edits.html"}
 	for _, p := range pages {
 		t, err := template.ParseFS(embedded, "templates/layout.html", "templates/"+p)
 		if err != nil {
@@ -62,6 +62,9 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("POST /boards/{id}/threads/new", s.requireMember(s.postThreadNew))
 	s.mux.HandleFunc("GET /threads/{id}", s.requireMember(s.getThread))
 	s.mux.HandleFunc("POST /threads/{id}/posts", s.requireMember(s.postReply))
+	s.mux.HandleFunc("GET /posts/{id}/edit", s.requireMember(s.getPostEdit))
+	s.mux.HandleFunc("POST /posts/{id}/edit", s.requireMember(s.postPostEdit))
+	s.mux.HandleFunc("GET /posts/{id}/edits", s.requireMember(s.getPostEdits))
 	return s, nil
 }
 
@@ -83,12 +86,23 @@ type page struct {
 	Posts          []postVM
 	Invites        []forum.InviteCode
 	NewCode        string
+	Post           *forum.Post
+	Edits          []editVM
+	CanViewEdits   bool
 }
 
 type postVM struct {
 	forum.PostView
-	BodyHTML  template.HTML
-	RoleLabel string
+	BodyHTML    template.HTML
+	RoleLabel   string
+	CanEdit     bool
+	EditedLabel string
+}
+
+type editVM struct {
+	forum.Edit
+	BodyHTML    template.HTML
+	EditedLabel string
 }
 
 func (s *Server) currentMember(r *http.Request) *forum.Member {
@@ -124,6 +138,7 @@ func (s *Server) render(w http.ResponseWriter, name string, p page) {
 		p.RoleLabel = forum.RoleLabel(p.Member.Role)
 		p.CanCreateBoard = forum.CanCreateBoard(p.Member)
 		p.CanIssueInvite = forum.CanIssueInvite(p.Member)
+		p.CanViewEdits = forum.CanViewEdits(p.Member)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout.html", p); err != nil {
@@ -393,15 +408,7 @@ func (s *Server) getThread(w http.ResponseWriter, r *http.Request, m *forum.Memb
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	vms := make([]postVM, 0, len(posts))
-	for _, p := range posts {
-		vms = append(vms, postVM{
-			PostView:  p,
-			BodyHTML:  template.HTML(markdown.Render(p.BodyMarkdown)),
-			RoleLabel: forum.RoleLabel(p.AuthorRole),
-		})
-	}
-	s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, Posts: vms})
+	s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts)})
 }
 
 func (s *Server) postReply(w http.ResponseWriter, r *http.Request, m *forum.Member) {
@@ -422,15 +429,7 @@ func (s *Server) postReply(w http.ResponseWriter, r *http.Request, m *forum.Memb
 	if _, err := s.store.CreatePost(th.ID, m.ID, r.FormValue("body")); err != nil {
 		b, _ := s.store.BoardByID(th.BoardID)
 		posts, _ := s.store.ListPosts(th.ID)
-		vms := make([]postVM, 0, len(posts))
-		for _, p := range posts {
-			vms = append(vms, postVM{
-				PostView:  p,
-				BodyHTML:  template.HTML(markdown.Render(p.BodyMarkdown)),
-				RoleLabel: forum.RoleLabel(p.AuthorRole),
-			})
-		}
-		s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, Posts: vms, Error: err.Error()})
+		s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts), Error: err.Error()})
 		return
 	}
 	http.Redirect(w, r, "/threads/"+strconv.FormatInt(th.ID, 10), http.StatusSeeOther)
@@ -473,7 +472,106 @@ func publicErr(err error) string {
 		return "显示名不能为空"
 	case forum.ErrPasswordEmpty, forum.ErrBadPassword:
 		return "密码不能为空"
+	case forum.ErrCannotEditPost:
+		return "不能编辑这篇帖"
+	case forum.ErrCannotViewEdits:
+		return "不能查看编辑历史"
+	case forum.ErrBodyEmpty:
+		return "正文不能为空"
 	default:
 		return err.Error()
 	}
+}
+
+func postVMs(m *forum.Member, posts []forum.PostView) []postVM {
+	vms := make([]postVM, 0, len(posts))
+	for _, p := range posts {
+		vm := postVM{
+			PostView:  p,
+			BodyHTML:  template.HTML(markdown.Render(p.BodyMarkdown)),
+			RoleLabel: forum.RoleLabel(p.AuthorRole),
+			CanEdit:   forum.CanEditPost(m, &p.Post),
+		}
+		if p.EditedAt != nil {
+			vm.EditedLabel = "已编辑 " + forum.FormatTimeUTC(*p.EditedAt) + " UTC"
+		}
+		vms = append(vms, vm)
+	}
+	return vms
+}
+
+func (s *Server) getPostEdit(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	p, err := s.store.PostByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !forum.CanEditPost(m, p) {
+		http.Error(w, "不能编辑这篇帖", http.StatusForbidden)
+		return
+	}
+	s.render(w, "post_edit.html", page{Member: m, Post: p})
+}
+
+func (s *Server) postPostEdit(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	p, err := s.store.PostByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !forum.CanEditPost(m, p) {
+		http.Error(w, "不能编辑这篇帖", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.render(w, "post_edit.html", page{Member: m, Post: p, Error: "表单无效"})
+		return
+	}
+	updated, err := s.store.UpdatePost(m, p.ID, r.FormValue("body"))
+	if err != nil {
+		s.render(w, "post_edit.html", page{Member: m, Post: p, Error: publicErr(err)})
+		return
+	}
+	http.Redirect(w, r, "/threads/"+strconv.FormatInt(updated.ThreadID, 10)+"#floor-"+strconv.Itoa(updated.Floor), http.StatusSeeOther)
+}
+
+func (s *Server) getPostEdits(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	if !forum.CanViewEdits(m) {
+		http.Error(w, "不能查看编辑历史", http.StatusForbidden)
+		return
+	}
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	p, err := s.store.PostByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	edits, err := s.store.ListEdits(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	vms := make([]editVM, 0, len(edits))
+	for _, e := range edits {
+		vms = append(vms, editVM{
+			Edit:        e,
+			BodyHTML:    template.HTML(markdown.Render(e.BodyMarkdown)),
+			EditedLabel: forum.FormatTimeUTC(e.EditedAt) + " UTC",
+		})
+	}
+	s.render(w, "post_edits.html", page{Member: m, Post: p, Edits: vms})
 }

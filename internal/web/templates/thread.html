@@ -7,6 +7,9 @@
   <header>
     <span class="floor">#{{.Floor}}</span>
     <span class="who">{{.AuthorDisplayName}} <b class="login">{{.AuthorLoginName}}</b>{{if .RoleLabel}} <span class="badge">{{.RoleLabel}}</span>{{end}}</span>
+    {{if .EditedLabel}}<span class="muted">{{.EditedLabel}}</span>{{end}}
+    {{if .CanEdit}}<a href="/posts/{{.ID}}/edit">编辑</a>{{end}}
+    {{if $.CanViewEdits}}{{if .EditedLabel}}<a href="/posts/{{.ID}}/edits">历史</a>{{end}}{{end}}
   </header>
   <div class="body">{{.BodyHTML}}</div>
 </article>

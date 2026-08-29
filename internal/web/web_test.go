@@ -297,3 +297,107 @@ func TestRevokedInviteCannotRegister(t *testing.T) {
 		t.Fatalf("expected revoked message: %s", body)
 	}
 }
+
+func TestEditPostAndHistoryAccess(t *testing.T) {
+	ts, client := testServer(t)
+	loginFounder(t, ts, client)
+
+	res, err := client.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+
+	res, err = client.PostForm(ts.URL+"/boards/1/threads/new", url.Values{
+		"title": {"题"},
+		"body":  {"旧文 ![x](https://example.com/old.png)"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body := readBody(t, res)
+	if !strings.Contains(body, "href=\"/posts/1/edit\"") {
+		t.Fatalf("edit link missing: %s", body)
+	}
+
+	res, err = client.PostForm(ts.URL+"/posts/1/edit", url.Values{"body": {"新文"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body = readBody(t, res)
+	if !strings.Contains(body, "新文") || strings.Contains(body, "旧文") {
+		t.Fatalf("body not updated: %s", body)
+	}
+	if !strings.Contains(body, "已编辑") {
+		t.Fatalf("edited mark missing: %s", body)
+	}
+	if !strings.Contains(body, "href=\"/posts/1/edits\"") {
+		t.Fatalf("history link missing: %s", body)
+	}
+
+	res, err = client.Get(ts.URL + "/posts/1/edits")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("founder history %d %s", res.StatusCode, body)
+	}
+	if !strings.Contains(body, "旧文") {
+		t.Fatalf("old body missing: %s", body)
+	}
+	if !strings.Contains(body, `src="https://example.com/old.png"`) {
+		t.Fatalf("old image missing: %s", body)
+	}
+
+	res, err = client.PostForm(ts.URL+"/invites", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body = readBody(t, res)
+	re := regexp.MustCompile(`刚发出：<code class="invite">([^<]+)</code>`)
+	m := re.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("code missing: %s", body)
+	}
+	code := m[1]
+	res, err = client.PostForm(ts.URL+"/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+
+	res, err = client.PostForm(ts.URL+"/register", url.Values{
+		"code":         {code},
+		"login_name":   {"wang"},
+		"display_name": {"老王"},
+		"password":     {"hunter2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+
+	res, err = client.Get(ts.URL + "/posts/1/edits")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member history %d", res.StatusCode)
+	}
+
+	res, err = client.Get(ts.URL + "/posts/1/edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member edit others %d", res.StatusCode)
+	}
+}

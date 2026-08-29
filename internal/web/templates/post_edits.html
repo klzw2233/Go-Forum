@@ -1,0 +1,12 @@
+{{define "title"}}编辑历史{{end}}
+{{define "content"}}
+<p class="crumb"><a href="/threads/{{.Post.ThreadID}}#floor-{{.Post.Floor}}">返回主题</a></p>
+<h1>#{{.Post.Floor}} 的旧全文</h1>
+{{if not .Edits}}<p class="muted">还没有编辑记录。</p>{{end}}
+{{range .Edits}}
+<article class="post">
+  <header><span class="muted">{{.EditedLabel}}</span></header>
+  <div class="body">{{.BodyHTML}}</div>
+</article>
+{{end}}
+{{end}}
