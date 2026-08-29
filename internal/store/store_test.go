@@ -18,6 +18,19 @@ func testStore(t *testing.T) *Store {
 	return s
 }
 
+func founder(t *testing.T, s *Store) *forum.Member {
+	t.Helper()
+	h, err := forum.HashPassword("secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.EnsureFounder("jimmy", "Jimmy", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
 func TestEnsureFounderDoesNotOverwritePassword(t *testing.T) {
 	s := testStore(t)
 	h1, err := forum.HashPassword("first")
@@ -136,5 +149,78 @@ func TestSessionRoundTrip(t *testing.T) {
 	}
 	if _, err := s.MemberBySession("tok"); err != forum.ErrNotFound {
 		t.Fatalf("deleted session: %v", err)
+	}
+}
+
+func TestInviteIssueRegisterRevoke(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+
+	if _, err := s.IssueInvite(&forum.Member{ID: f.ID, Role: forum.RoleMember}, "abc"); err != forum.ErrCannotIssueInvite {
+		t.Fatalf("member issue: %v", err)
+	}
+
+	inv, err := s.IssueInvite(f, "codeAAAA1111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv.IssuedByLogin != "jimmy" || inv.Status() != "未使用" {
+		t.Fatalf("%+v", inv)
+	}
+
+	h, err := forum.HashPassword("hunter2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.Register("codeAAAA1111", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Role != forum.RoleMember || m.LoginName != "wang" {
+		t.Fatalf("%+v", m)
+	}
+	used, err := s.InviteByCode("codeAAAA1111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used.UsedByLogin != "wang" || used.Status() != "已使用" {
+		t.Fatalf("%+v", used)
+	}
+
+	if _, err := s.Register("codeAAAA1111", "li", "李", h); err != forum.ErrInviteUsed {
+		t.Fatalf("reuse: %v", err)
+	}
+	if err := s.RevokeInvite(f, inv.ID); err != forum.ErrInviteUsed {
+		t.Fatalf("revoke used: %v", err)
+	}
+
+	inv2, err := s.IssueInvite(f, "codeBBBB2222")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Register("codeBBBB2222", "wang", "占用", h); err != forum.ErrLoginNameTaken {
+		t.Fatalf("taken: %v", err)
+	}
+	still, err := s.InviteByID(inv2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if still.Status() != "未使用" {
+		t.Fatalf("code consumed on name clash: %+v", still)
+	}
+
+	if err := s.RevokeInvite(f, inv2.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Register("codeBBBB2222", "zhao", "赵", h); err != forum.ErrInviteRevoked {
+		t.Fatalf("revoked register: %v", err)
+	}
+
+	_, hash, err := s.MemberByLogin("jimmy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !forum.CheckPassword(hash, "secret") {
+		t.Fatal("founder password changed")
 	}
 }

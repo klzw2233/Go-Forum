@@ -3,6 +3,7 @@ package forum
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidLoginName(t *testing.T) {
@@ -83,5 +84,33 @@ func TestCanCreateBoard(t *testing.T) {
 	}
 	if !CanCreateBoard(&Member{Role: RoleFounder}) {
 		t.Fatal("founder must create boards")
+	}
+}
+
+func TestCanIssueInvite(t *testing.T) {
+	if CanIssueInvite(nil) || CanIssueInvite(&Member{Role: RoleMember}) {
+		t.Fatal("member must not issue invites")
+	}
+	if !CanIssueInvite(&Member{Role: RoleOperator}) || !CanIssueInvite(&Member{Role: RoleFounder}) {
+		t.Fatal("operator and founder must issue invites")
+	}
+}
+
+func TestInviteUsable(t *testing.T) {
+	if err := InviteUsable(nil); err != ErrInviteInvalid {
+		t.Fatalf("nil: %v", err)
+	}
+	if err := InviteUsable(&InviteCode{Code: "x"}); err != nil {
+		t.Fatalf("fresh: %v", err)
+	}
+	if err := InviteUsable(&InviteCode{Code: "x", Revoked: true}); err != ErrInviteRevoked {
+		t.Fatalf("revoked: %v", err)
+	}
+	if err := InviteUsable(&InviteCode{Code: "x", UsedByLogin: "wang"}); err != ErrInviteUsed {
+		t.Fatalf("used login: %v", err)
+	}
+	now := time.Now()
+	if err := InviteUsable(&InviteCode{Code: "x", UsedAt: &now}); err != ErrInviteUsed {
+		t.Fatalf("used at: %v", err)
 	}
 }

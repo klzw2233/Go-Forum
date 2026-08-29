@@ -10,7 +10,7 @@ const bcryptCost = bcrypt.DefaultCost
 
 func HashPassword(plain string) (string, error) {
 	if plain == "" {
-		return "", ErrBadPassword
+		return "", ErrPasswordEmpty
 	}
 	b, err := bcrypt.GenerateFromPassword([]byte(plain), bcryptCost)
 	if err != nil {
