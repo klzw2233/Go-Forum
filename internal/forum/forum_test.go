@@ -114,3 +114,25 @@ func TestInviteUsable(t *testing.T) {
 		t.Fatalf("used at: %v", err)
 	}
 }
+
+func TestCanEditPost(t *testing.T) {
+	p := &Post{AuthorID: 2}
+	if CanEditPost(nil, p) || CanEditPost(&Member{ID: 1, Role: RoleFounder}, p) {
+		t.Fatal("non-author must not edit")
+	}
+	if CanEditPost(&Member{ID: 3, Role: RoleOperator}, p) {
+		t.Fatal("operator must not edit others")
+	}
+	if !CanEditPost(&Member{ID: 2, Role: RoleMember}, p) {
+		t.Fatal("author must edit")
+	}
+}
+
+func TestCanViewEdits(t *testing.T) {
+	if CanViewEdits(nil) || CanViewEdits(&Member{Role: RoleMember}) {
+		t.Fatal("member must not view edits")
+	}
+	if !CanViewEdits(&Member{Role: RoleOperator}) || !CanViewEdits(&Member{Role: RoleFounder}) {
+		t.Fatal("operator and founder must view edits")
+	}
+}

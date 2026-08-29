@@ -224,3 +224,61 @@ func TestInviteIssueRegisterRevoke(t *testing.T) {
 		t.Fatal("founder password changed")
 	}
 }
+
+func TestUpdatePostKeepsLastPostAtAndHistory(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	b, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, p1, err := s.CreateThread(b.ID, f.ID, "题", "旧文")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.ThreadByID(th.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.UpdatePost(f, p1.ID, "新文")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BodyMarkdown != "新文" || got.EditedAt == nil {
+		t.Fatalf("%+v", got)
+	}
+	after, err := s.ThreadByID(th.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.LastPostAt.Equal(before.LastPostAt) {
+		t.Fatalf("last_post_at moved %v -> %v", before.LastPostAt, after.LastPostAt)
+	}
+	edits, err := s.ListEdits(p1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edits) != 1 || edits[0].BodyMarkdown != "旧文" {
+		t.Fatalf("%+v", edits)
+	}
+
+	if _, err := s.UpdatePost(f, p1.ID, "更新"); err != nil {
+		t.Fatal(err)
+	}
+	edits, err = s.ListEdits(p1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edits) != 2 {
+		t.Fatalf("want 2 edits, got %d", len(edits))
+	}
+
+	if _, err := s.UpdatePost(f, p1.ID, ""); err != forum.ErrBodyEmpty {
+		t.Fatalf("empty: %v", err)
+	}
+	other := &forum.Member{ID: f.ID + 99, Role: forum.RoleMember}
+	if _, err := s.UpdatePost(other, p1.ID, "偷改"); err != forum.ErrCannotEditPost {
+		t.Fatalf("other: %v", err)
+	}
+}

@@ -1,0 +1,10 @@
+{{define "title"}}编辑帖{{end}}
+{{define "content"}}
+<h1>编辑帖</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form method="post" action="/posts/{{.Post.ID}}/edit">
+  <label>正文（Markdown） <textarea name="body" rows="12" required>{{.Post.BodyMarkdown}}</textarea></label>
+  <button type="submit">保存</button>
+</form>
+<p><a href="/threads/{{.Post.ThreadID}}#floor-{{.Post.Floor}}">返回主题</a></p>
+{{end}}

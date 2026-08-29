@@ -69,7 +69,14 @@ CREATE TABLE IF NOT EXISTS invite_codes (
 	revoked INTEGER NOT NULL DEFAULT 0,
 	used_by_login TEXT,
 	used_at TEXT
-);
+	);
+
+	CREATE TABLE IF NOT EXISTS post_edits (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		post_id INTEGER NOT NULL REFERENCES posts(id),
+		body_markdown TEXT NOT NULL,
+		edited_at TEXT NOT NULL
+	);
 `
 
 type Store struct {
@@ -91,6 +98,12 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
+	}
+	if _, err := db.Exec(`ALTER TABLE posts ADD COLUMN edited_at TEXT`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate posts.edited_at: %w", err)
+		}
 	}
 	return &Store{db: db}, nil
 }
@@ -433,7 +446,7 @@ func (s *Store) CreatePost(threadID, authorID int64, body string) (*forum.Post, 
 
 func (s *Store) ListPosts(threadID int64) ([]forum.PostView, error) {
 	rows, err := s.db.Query(`
-		SELECT p.id, p.thread_id, p.author_id, p.floor, p.body_markdown, p.created_at,
+		SELECT p.id, p.thread_id, p.author_id, p.floor, p.body_markdown, p.created_at, p.edited_at,
 		       m.login_name, m.display_name, m.role
 		FROM posts p
 		JOIN members m ON m.id = p.author_id
@@ -448,10 +461,15 @@ func (s *Store) ListPosts(threadID int64) ([]forum.PostView, error) {
 	for rows.Next() {
 		var v forum.PostView
 		var created, role string
-		if err := rows.Scan(&v.ID, &v.ThreadID, &v.AuthorID, &v.Floor, &v.BodyMarkdown, &created, &v.AuthorLoginName, &v.AuthorDisplayName, &role); err != nil {
+		var edited sql.NullString
+		if err := rows.Scan(&v.ID, &v.ThreadID, &v.AuthorID, &v.Floor, &v.BodyMarkdown, &created, &edited, &v.AuthorLoginName, &v.AuthorDisplayName, &role); err != nil {
 			return nil, err
 		}
 		v.CreatedAt = parseTime(created)
+		if edited.Valid && edited.String != "" {
+			t := parseTime(edited.String)
+			v.EditedAt = &t
+		}
 		v.AuthorRole = forum.Role(role)
 		out = append(out, v)
 	}

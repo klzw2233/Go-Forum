@@ -46,6 +46,8 @@ var (
 	ErrInviteRevoked     = errors.New("invite code is revoked")
 	ErrInviteUsed        = errors.New("invite code is already used")
 	ErrCannotIssueInvite = errors.New("cannot issue invite codes")
+	ErrCannotEditPost    = errors.New("cannot edit this post")
+	ErrCannotViewEdits   = errors.New("cannot view edit history")
 )
 
 type Member struct {
@@ -80,6 +82,7 @@ type Post struct {
 	Floor        int
 	BodyMarkdown string
 	CreatedAt    time.Time
+	EditedAt     *time.Time
 }
 
 type ThreadView struct {
@@ -114,6 +117,13 @@ func (c InviteCode) Status() string {
 		return "已使用"
 	}
 	return "未使用"
+}
+
+type Edit struct {
+	ID           int64
+	PostID       int64
+	BodyMarkdown string
+	EditedAt     time.Time
 }
 
 func ValidLoginName(s string) bool {
@@ -200,6 +210,14 @@ func CanIssueInvite(m *Member) bool {
 	return CanCreateBoard(m)
 }
 
+func CanEditPost(m *Member, p *Post) bool {
+	return m != nil && p != nil && m.ID == p.AuthorID
+}
+
+func CanViewEdits(m *Member) bool {
+	return CanIssueInvite(m)
+}
+
 func InviteUsable(c *InviteCode) error {
 	if c == nil {
 		return ErrInviteInvalid
@@ -222,4 +240,8 @@ func RoleLabel(r Role) string {
 	default:
 		return ""
 	}
+}
+
+func FormatTimeUTC(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04")
 }
