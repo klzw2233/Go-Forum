@@ -1,0 +1,10 @@
+{{define "title"}}新建版块{{end}}
+{{define "content"}}
+<h1>新建版块</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form method="post" action="/boards/new">
+  <label>名称 <input name="name" required></label>
+  <label>说明 <input name="description"></label>
+  <button type="submit">创建</button>
+</form>
+{{end}}

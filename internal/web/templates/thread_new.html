@@ -1,0 +1,11 @@
+{{define "title"}}发主题{{end}}
+{{define "content"}}
+<p class="crumb"><a href="/">版块</a> / <a href="/boards/{{.Board.ID}}">{{.Board.Name}}</a></p>
+<h1>发主题</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form method="post" action="/boards/{{.Board.ID}}/threads/new">
+  <label>标题 <input name="title" required></label>
+  <label>正文（Markdown） <textarea name="body" rows="10" required></textarea></label>
+  <button type="submit">发表</button>
+</form>
+{{end}}

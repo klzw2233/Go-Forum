@@ -1,0 +1,16 @@
+{{define "title"}}{{.Board.Name}}{{end}}
+{{define "content"}}
+<p class="crumb"><a href="/">版块</a> / {{.Board.Name}}</p>
+<h1>{{.Board.Name}}</h1>
+{{if .Board.Description}}<p class="muted">{{.Board.Description}}</p>{{end}}
+<p><a href="/boards/{{.Board.ID}}/threads/new">发主题</a></p>
+{{if not .Threads}}<p class="muted">还没有主题。</p>{{end}}
+<ul class="threads">
+{{range .Threads}}
+  <li>
+    <a href="/threads/{{.ID}}">{{.Title}}</a>
+    <span class="muted">{{.AuthorDisplayName}} <b class="login">{{.AuthorLoginName}}</b></span>
+  </li>
+{{end}}
+</ul>
+{{end}}

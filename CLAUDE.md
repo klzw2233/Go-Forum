@@ -53,11 +53,9 @@ If the human is still doing the work, their habits still apply to them.
 
 
 ## 0. Project Identity (Pre-flight)
-Before applying the rules above, load these immutable facts:
-- **Tech Stack**: [Language, Framework, Package Manager, Minimum Version].
-- **Entrypoints**: Where does the system start? (Main, CLI, Server init).
-- **Ground Truth**: The `main`/`master` branch is the source of truth. 
-  - If tests pass locally but fail in CI, treat the CI's failure as the ultimate exit condition.
-  - If tests do not exist, generating a single "smoke test" that proves the entrypoint loads is mandatory before any structural changes.
-- **Critical Path**: Identify the 1-2 user journeys that make or break the product. Never suggest changes that block these paths without a rollback plan.
-- **Documentation location**: Where is the actual `README` or `ARCHITECTURE.md`? (Do not rely on my context history for this).
+
+- **Tech Stack**: Go 1.26, std `net/http` + `html/template`, SQLite via `modernc.org/sqlite`, module `go-forum`. No CGO.
+- **Entrypoints**: `cmd/forum/main.go` — load `forum.toml`, open SQLite, ensure founder, listen HTTP.
+- **Ground Truth**: `main` is source of truth. Work on feature branches. Local exit condition is `go test ./...` (plus `gofmt` and `go vet`). GitHub Actions (`.github/workflows/ci.yml`) is the remote exit condition: if local is green and CI is red, CI wins.
+- **Critical Path**: Logged-in member opens a board, starts a thread, replies, and sees Markdown (including http(s) image URLs) immediately. Unauthenticated visitors see only the login page.
+- **Documentation**: `README.md` (how to run), `CONTEXT.md` (glossary), `docs/adr/` (hard decisions), `notes/` (config and usage notes).

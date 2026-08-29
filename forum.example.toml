@@ -1,0 +1,7 @@
+listen = "127.0.0.1:8080"
+database = "forum.db"
+
+[founder]
+login_name = "jimmy"
+display_name = "Jimmy"
+password = "change-me"
