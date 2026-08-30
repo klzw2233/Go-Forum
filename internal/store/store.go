@@ -104,6 +104,7 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE posts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE threads ADD COLUMN title_edited_at TEXT`,
 		`ALTER TABLE threads ADD COLUMN pin_rank INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE boards ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -253,8 +254,25 @@ func (s *Store) CreateBoard(name, description string) (*forum.Board, error) {
 	return s.BoardByID(id)
 }
 
+func (s *Store) SetBoardDisabled(actor *forum.Member, id int64, disabled bool) (*forum.Board, error) {
+	if !forum.CanCreateBoard(actor) {
+		return nil, forum.ErrCannotManageBoard
+	}
+	if _, err := s.BoardByID(id); err != nil {
+		return nil, err
+	}
+	v := 0
+	if disabled {
+		v = 1
+	}
+	if _, err := s.db.Exec(`UPDATE boards SET disabled = ? WHERE id = ?`, v, id); err != nil {
+		return nil, err
+	}
+	return s.BoardByID(id)
+}
+
 func (s *Store) ListBoards() ([]forum.Board, error) {
-	rows, err := s.db.Query(`SELECT id, name, description, sort, created_at FROM boards ORDER BY sort ASC, id ASC`)
+	rows, err := s.db.Query(`SELECT id, name, description, sort, disabled, created_at FROM boards ORDER BY sort ASC, id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -263,9 +281,11 @@ func (s *Store) ListBoards() ([]forum.Board, error) {
 	for rows.Next() {
 		var b forum.Board
 		var created string
-		if err := rows.Scan(&b.ID, &b.Name, &b.Description, &b.Sort, &created); err != nil {
+		var disabled int
+		if err := rows.Scan(&b.ID, &b.Name, &b.Description, &b.Sort, &disabled, &created); err != nil {
 			return nil, err
 		}
+		b.Disabled = disabled != 0
 		b.CreatedAt = parseTime(created)
 		out = append(out, b)
 	}
@@ -275,16 +295,18 @@ func (s *Store) ListBoards() ([]forum.Board, error) {
 func (s *Store) BoardByID(id int64) (*forum.Board, error) {
 	var b forum.Board
 	var created string
+	var disabled int
 	err := s.db.QueryRow(
-		`SELECT id, name, description, sort, created_at FROM boards WHERE id = ?`,
+		`SELECT id, name, description, sort, disabled, created_at FROM boards WHERE id = ?`,
 		id,
-	).Scan(&b.ID, &b.Name, &b.Description, &b.Sort, &created)
+	).Scan(&b.ID, &b.Name, &b.Description, &b.Sort, &disabled, &created)
 	if err == sql.ErrNoRows {
 		return nil, forum.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	b.Disabled = disabled != 0
 	b.CreatedAt = parseTime(created)
 	return &b, nil
 }

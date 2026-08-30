@@ -504,6 +504,46 @@ func TestPinOrderAndMove(t *testing.T) {
 	_ = a
 }
 
+func TestSetBoardDisabled(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "disablecode1"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("disablecode1", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetBoardDisabled(mem, b.ID, true); err != forum.ErrCannotManageBoard {
+		t.Fatalf("member disable: %v", err)
+	}
+	got, err := s.SetBoardDisabled(f, b.ID, true)
+	if err != nil || !got.Disabled {
+		t.Fatalf("disable: %+v err=%v", got, err)
+	}
+	// Store keeps the board readable; member-side hiding is the handler's job.
+	again, err := s.BoardByID(b.ID)
+	if err != nil || !again.Disabled {
+		t.Fatalf("BoardByID after disable: %+v err=%v", again, err)
+	}
+	list, err := s.ListBoards()
+	if err != nil || len(list) != 1 || !list[0].Disabled {
+		t.Fatalf("ListBoards after disable: %+v err=%v", list, err)
+	}
+	back, err := s.SetBoardDisabled(f, b.ID, false)
+	if err != nil || back.Disabled {
+		t.Fatalf("enable: %+v err=%v", back, err)
+	}
+}
+
 func titles(in []forum.ThreadView) []string {
 	out := make([]string, len(in))
 	for i, t := range in {

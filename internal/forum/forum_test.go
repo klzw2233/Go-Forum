@@ -192,3 +192,23 @@ func TestCanPin(t *testing.T) {
 		t.Fatal("staff must pin")
 	}
 }
+
+func TestCanSeeBoard(t *testing.T) {
+	open := &Board{}
+	closed := &Board{Disabled: true}
+	member := &Member{Role: RoleMember}
+	op := &Member{Role: RoleOperator}
+
+	if !CanSeeBoard(member, open) || !CanSeeBoard(nil, open) {
+		t.Fatal("everyone sees an open board")
+	}
+	if CanSeeBoard(member, closed) || CanSeeBoard(nil, closed) {
+		t.Fatal("members must not see a disabled board")
+	}
+	if !CanSeeBoard(op, closed) {
+		t.Fatal("operators still see a disabled board")
+	}
+	if CanSeeBoard(member, nil) {
+		t.Fatal("nil board is never visible")
+	}
+}

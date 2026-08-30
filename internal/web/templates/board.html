@@ -1,8 +1,15 @@
 {{define "title"}}{{.Board.Name}}{{end}}
 {{define "content"}}
 <p class="crumb"><a href="/">版块</a> / {{.Board.Name}}</p>
-<h1>{{.Board.Name}}</h1>
+<h1>{{.Board.Name}}{{if .Board.Disabled}} <span class="badge">已停用</span>{{end}}</h1>
 {{if .Board.Description}}<p class="muted">{{.Board.Description}}</p>{{end}}
+{{if .CanCreateBoard}}
+  {{if .Board.Disabled}}
+  <form class="inline" method="post" action="/boards/{{.Board.ID}}/enable"><button type="submit">启用</button></form>
+  {{else}}
+  <form class="inline" method="post" action="/boards/{{.Board.ID}}/disable"><button type="submit">停用</button></form>
+  {{end}}
+{{end}}
 <p><a href="/boards/{{.Board.ID}}/threads/new">发主题</a></p>
 {{if not .Threads}}<p class="muted">还没有主题。</p>{{end}}
 <ul class="threads">

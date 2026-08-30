@@ -699,3 +699,127 @@ func TestPinHTTP(t *testing.T) {
 	}
 	res.Body.Close()
 }
+
+func registerMember(t *testing.T, ts *httptest.Server, client *http.Client, login, display string) {
+	t.Helper()
+	res, err := client.PostForm(ts.URL+"/invites", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body := readBody(t, res)
+	m := regexp.MustCompile(`刚发出：<code class="invite">([^<]+)</code>`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("invite code missing: %s", body)
+	}
+	if res, err = client.PostForm(ts.URL+"/logout", nil); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	res, err = client.PostForm(ts.URL+"/register", url.Values{
+		"code":         {m[1]},
+		"login_name":   {login},
+		"display_name": {display},
+		"password":     {"hunter2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+}
+
+func TestDisableBoardHidesFromMembers(t *testing.T) {
+	ts, client := testServer(t)
+	loginFounder(t, ts, client)
+
+	// Board 1 with a thread.
+	res, err := client.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}, "description": {""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+	res, err = client.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"帖子"}, "body": {"正文"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+
+	// Disable it as founder.
+	res, err = client.PostForm(ts.URL+"/boards/1/disable", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body := readBody(t, res)
+	if !strings.Contains(body, "已停用") || !strings.Contains(body, "/boards/1/enable") {
+		t.Fatalf("founder board page after disable: %s", body)
+	}
+
+	// Register a plain member (this logs them in).
+	registerMember(t, ts, client, "wang", "老王")
+
+	// Member: board gone from home, board/thread/reply/new all 404.
+	res, err = client.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(readBody(t, res), "灌水") {
+		t.Fatal("member saw disabled board on home")
+	}
+	for _, path := range []string{"/boards/1", "/boards/1/threads/new", "/threads/1"} {
+		res, err = client.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("member GET %s = %d, want 404", path, res.StatusCode)
+		}
+		res.Body.Close()
+	}
+	res, err = client.PostForm(ts.URL+"/threads/1/posts", url.Values{"body": {"回复"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("member reply in disabled board = %d, want 404", res.StatusCode)
+	}
+	res.Body.Close()
+
+	// Member cannot disable/enable.
+	res, err = client.PostForm(ts.URL+"/boards/1/enable", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member enable = %d, want 403", res.StatusCode)
+	}
+	res.Body.Close()
+
+	// Founder re-enables; member sees it again.
+	loginFounder(t, ts, client)
+	res, err = client.PostForm(ts.URL+"/boards/1/enable", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+	res, err = client.PostForm(ts.URL+"/login", url.Values{"login_name": {"wang"}, "password": {"hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	if !strings.Contains(readBody(t, res), "灌水") {
+		t.Fatal("member should see re-enabled board")
+	}
+	res, err = client.Get(ts.URL + "/boards/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("member GET re-enabled board = %d", res.StatusCode)
+	}
+	res.Body.Close()
+}

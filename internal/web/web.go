@@ -58,6 +58,8 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("GET /boards/new", s.requireMember(s.getBoardNew))
 	s.mux.HandleFunc("POST /boards/new", s.requireMember(s.postBoardNew))
 	s.mux.HandleFunc("GET /boards/{id}", s.requireMember(s.getBoard))
+	s.mux.HandleFunc("POST /boards/{id}/disable", s.requireMember(s.postDisableBoard))
+	s.mux.HandleFunc("POST /boards/{id}/enable", s.requireMember(s.postEnableBoard))
 	s.mux.HandleFunc("GET /boards/{id}/threads/new", s.requireMember(s.getThreadNew))
 	s.mux.HandleFunc("POST /boards/{id}/threads/new", s.requireMember(s.postThreadNew))
 	s.mux.HandleFunc("GET /threads/{id}", s.requireMember(s.getThread))
@@ -260,6 +262,15 @@ func (s *Server) getHome(w http.ResponseWriter, r *http.Request, m *forum.Member
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if !forum.CanCreateBoard(m) {
+		visible := boards[:0]
+		for _, b := range boards {
+			if !b.Disabled {
+				visible = append(visible, b)
+			}
+		}
+		boards = visible
+	}
 	s.render(w, "home.html", page{Member: m, Boards: boards})
 }
 
@@ -347,6 +358,33 @@ func (s *Server) postBoardNew(w http.ResponseWriter, r *http.Request, m *forum.M
 	http.Redirect(w, r, "/boards/"+strconv.FormatInt(b.ID, 10), http.StatusSeeOther)
 }
 
+func (s *Server) postDisableBoard(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.setBoardDisabled(w, r, m, true)
+}
+
+func (s *Server) postEnableBoard(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.setBoardDisabled(w, r, m, false)
+}
+
+func (s *Server) setBoardDisabled(w http.ResponseWriter, r *http.Request, m *forum.Member, disabled bool) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	b, err := s.store.SetBoardDisabled(m, id, disabled)
+	switch err {
+	case nil:
+		http.Redirect(w, r, "/boards/"+strconv.FormatInt(b.ID, 10), http.StatusSeeOther)
+	case forum.ErrCannotManageBoard:
+		http.Error(w, "只有创始人或运营者能停用版块", http.StatusForbidden)
+	case forum.ErrNotFound:
+		http.NotFound(w, r)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 func (s *Server) getBoard(w http.ResponseWriter, r *http.Request, m *forum.Member) {
 	id, ok := pathID(r, "id")
 	if !ok {
@@ -354,7 +392,7 @@ func (s *Server) getBoard(w http.ResponseWriter, r *http.Request, m *forum.Membe
 		return
 	}
 	b, err := s.store.BoardByID(id)
-	if err != nil {
+	if err != nil || !forum.CanSeeBoard(m, b) {
 		http.NotFound(w, r)
 		return
 	}
@@ -373,7 +411,7 @@ func (s *Server) getThreadNew(w http.ResponseWriter, r *http.Request, m *forum.M
 		return
 	}
 	b, err := s.store.BoardByID(id)
-	if err != nil {
+	if err != nil || !forum.CanSeeBoard(m, b) {
 		http.NotFound(w, r)
 		return
 	}
@@ -387,7 +425,7 @@ func (s *Server) postThreadNew(w http.ResponseWriter, r *http.Request, m *forum.
 		return
 	}
 	b, err := s.store.BoardByID(id)
-	if err != nil {
+	if err != nil || !forum.CanSeeBoard(m, b) {
 		http.NotFound(w, r)
 		return
 	}
@@ -415,7 +453,7 @@ func (s *Server) getThread(w http.ResponseWriter, r *http.Request, m *forum.Memb
 		return
 	}
 	b, err := s.store.BoardByID(th.BoardID)
-	if err != nil {
+	if err != nil || !forum.CanSeeBoard(m, b) {
 		http.NotFound(w, r)
 		return
 	}
@@ -444,6 +482,10 @@ func (s *Server) postReply(w http.ResponseWriter, r *http.Request, m *forum.Memb
 	}
 	th, err := s.store.ThreadByID(id)
 	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if b, berr := s.store.BoardByID(th.BoardID); berr != nil || !forum.CanSeeBoard(m, b) {
 		http.NotFound(w, r)
 		return
 	}
@@ -519,6 +561,8 @@ func publicErr(err error) string {
 		return "不能回复这篇主题"
 	case forum.ErrCannotPin:
 		return "不能置顶"
+	case forum.ErrCannotManageBoard:
+		return "只有创始人或运营者能停用版块"
 	default:
 		return err.Error()
 	}
