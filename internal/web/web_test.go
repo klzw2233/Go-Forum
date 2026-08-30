@@ -1529,3 +1529,83 @@ func TestUnreadBadge(t *testing.T) {
 		t.Fatalf("after reply not unread: %s", body)
 	}
 }
+
+func TestLockThreadHTTP(t *testing.T) {
+	ts, founderC := testServer(t)
+	loginFounder(t, ts, founderC)
+	res, err := founderC.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}, "description": {""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	registerMember(t, ts, founderC, "wang", "老王")
+	res, err = founderC.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"主题"}, "body": {"一楼"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("new thread %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = founderC.PostForm(ts.URL+"/threads/1/lock", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member lock %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	loginFounder(t, ts, founderC)
+	res, err = founderC.PostForm(ts.URL+"/threads/1/lock", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	body := readBody(t, res)
+	if !strings.Contains(body, "已锁定") || !strings.Contains(body, "/threads/1/unlock") {
+		t.Fatalf("founder lock page: %s", body)
+	}
+
+	res, err = founderC.PostForm(ts.URL+"/login", url.Values{"login_name": {"wang"}, "password": {"hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	res, err = founderC.Get(ts.URL + "/threads/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "已锁定，不能回帖") || strings.Contains(body, `action="/threads/1/posts"`) {
+		t.Fatalf("member locked thread: %s", body)
+	}
+	res, err = founderC.PostForm(ts.URL+"/threads/1/posts", url.Values{"body": {"硬回"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusForbidden {
+		body = readBody(t, res)
+		t.Fatalf("member reply locked %d %s", res.StatusCode, body)
+	}
+	if res.StatusCode == http.StatusOK {
+		body = readBody(t, res)
+		if !strings.Contains(body, "已锁定") {
+			t.Fatalf("member reply body: %s", body)
+		}
+	} else {
+		res.Body.Close()
+	}
+
+	res, err = founderC.Get(ts.URL + "/boards/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "已锁定") {
+		t.Fatalf("board list: %s", body)
+	}
+}

@@ -1074,3 +1074,54 @@ func TestThreadUnreadMarks(t *testing.T) {
 		t.Fatalf("search after catch-up: %+v err=%v", got, err)
 	}
 }
+
+func TestLockThread(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "lockcodeaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("lockcodeaaaaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, _, err := s.CreateThread(b.ID, mem.ID, "主题", "一楼")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetThreadLocked(mem, th.ID, true); err != forum.ErrCannotLock {
+		t.Fatalf("member lock: %v", err)
+	}
+	got, err := s.SetThreadLocked(f, th.ID, true)
+	if err != nil || !got.Locked {
+		t.Fatalf("lock: %+v err=%v", got, err)
+	}
+	if _, err := s.CreatePost(th.ID, mem.ID, "会员回"); err != forum.ErrCannotReply {
+		t.Fatalf("member reply locked: %v", err)
+	}
+	if _, err := s.CreatePost(th.ID, f.ID, "运营回"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdatePost(mem, 1, "改一楼"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListThreads(b.ID, mem)
+	if err != nil || len(list) != 1 || !list[0].Locked {
+		t.Fatalf("list locked: %+v err=%v", list, err)
+	}
+	back, err := s.SetThreadLocked(f, th.ID, false)
+	if err != nil || back.Locked {
+		t.Fatalf("unlock: %+v err=%v", back, err)
+	}
+	if _, err := s.CreatePost(th.ID, mem.ID, "解锁后"); err != nil {
+		t.Fatal(err)
+	}
+}

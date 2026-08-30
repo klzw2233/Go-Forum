@@ -119,6 +119,7 @@ func Open(path string) (*Store, error) {
 			last_read_floor INTEGER NOT NULL,
 			PRIMARY KEY (member_id, thread_id)
 		)`,
+		`ALTER TABLE threads ADD COLUMN locked INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -616,7 +617,7 @@ func (s *Store) ListThreads(boardID int64, viewer *forum.Member) ([]forum.Thread
 		viewerID = viewer.ID
 	}
 	q := `
-		SELECT t.id, t.board_id, t.title, t.author_id, t.created_at, t.last_post_at, t.title_edited_at, t.pin_rank,
+		SELECT t.id, t.board_id, t.title, t.author_id, t.created_at, t.last_post_at, t.title_edited_at, t.pin_rank, t.locked,
 		       m.login_name, m.display_name,
 		       COALESCE((SELECT p.hidden FROM posts p WHERE p.thread_id = t.id AND p.floor = 1), 0),
 		       COALESCE((SELECT MAX(p.floor) FROM posts p WHERE p.thread_id = t.id), 0),
@@ -639,9 +640,9 @@ func (s *Store) ListThreads(boardID int64, viewer *forum.Member) ([]forum.Thread
 		var v forum.ThreadView
 		var created, last string
 		var titleEdited sql.NullString
-		var hidden, maxFloor int
+		var hidden, maxFloor, locked int
 		var lastRead sql.NullInt64
-		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &titleEdited, &v.PinRank, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden, &maxFloor, &lastRead); err != nil {
+		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &titleEdited, &v.PinRank, &locked, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden, &maxFloor, &lastRead); err != nil {
 			return nil, err
 		}
 		v.CreatedAt = parseTime(created)
@@ -650,6 +651,7 @@ func (s *Store) ListThreads(boardID int64, viewer *forum.Member) ([]forum.Thread
 			tm := parseTime(titleEdited.String)
 			v.TitleEditedAt = &tm
 		}
+		v.Locked = locked != 0
 		v.FirstHidden = hidden != 0
 		if v.FirstHidden && !forum.CanHidePost(viewer) {
 			continue
@@ -672,7 +674,7 @@ func (s *Store) SearchThreads(viewer *forum.Member, query string) ([]forum.Threa
 		viewerID = viewer.ID
 	}
 	q := `
-		SELECT t.id, t.board_id, t.title, t.author_id, t.created_at, t.last_post_at, t.title_edited_at, t.pin_rank,
+		SELECT t.id, t.board_id, t.title, t.author_id, t.created_at, t.last_post_at, t.title_edited_at, t.pin_rank, t.locked,
 		       m.login_name, m.display_name,
 		       COALESCE((SELECT p.hidden FROM posts p WHERE p.thread_id = t.id AND p.floor = 1), 0),
 		       b.name, b.disabled,
@@ -706,9 +708,9 @@ func (s *Store) SearchThreads(viewer *forum.Member, query string) ([]forum.Threa
 		var v forum.ThreadView
 		var created, last string
 		var titleEdited sql.NullString
-		var hidden, disabled, maxFloor int
+		var hidden, disabled, maxFloor, locked int
 		var lastRead sql.NullInt64
-		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &titleEdited, &v.PinRank, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden, &v.BoardName, &disabled, &maxFloor, &lastRead); err != nil {
+		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &titleEdited, &v.PinRank, &locked, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden, &v.BoardName, &disabled, &maxFloor, &lastRead); err != nil {
 			return nil, err
 		}
 		v.CreatedAt = parseTime(created)
@@ -717,6 +719,7 @@ func (s *Store) SearchThreads(viewer *forum.Member, query string) ([]forum.Threa
 			tm := parseTime(titleEdited.String)
 			v.TitleEditedAt = &tm
 		}
+		v.Locked = locked != 0
 		v.FirstHidden = hidden != 0
 		v.BoardDisabled = disabled != 0
 		if v.FirstHidden && !staff {
@@ -739,10 +742,11 @@ func (s *Store) ThreadByID(id int64) (*forum.Thread, error) {
 	var th forum.Thread
 	var created, last string
 	var titleEdited sql.NullString
+	var locked int
 	err := s.db.QueryRow(
-		`SELECT id, board_id, title, author_id, created_at, last_post_at, title_edited_at, pin_rank FROM threads WHERE id = ?`,
+		`SELECT id, board_id, title, author_id, created_at, last_post_at, title_edited_at, pin_rank, locked FROM threads WHERE id = ?`,
 		id,
-	).Scan(&th.ID, &th.BoardID, &th.Title, &th.AuthorID, &created, &last, &titleEdited, &th.PinRank)
+	).Scan(&th.ID, &th.BoardID, &th.Title, &th.AuthorID, &created, &last, &titleEdited, &th.PinRank, &locked)
 	if err == sql.ErrNoRows {
 		return nil, forum.ErrNotFound
 	}
@@ -752,9 +756,10 @@ func (s *Store) ThreadByID(id int64) (*forum.Thread, error) {
 	th.CreatedAt = parseTime(created)
 	th.LastPostAt = parseTime(last)
 	if titleEdited.Valid && titleEdited.String != "" {
-		t := parseTime(titleEdited.String)
-		th.TitleEditedAt = &t
+		tm := parseTime(titleEdited.String)
+		th.TitleEditedAt = &tm
 	}
+	th.Locked = locked != 0
 	return &th, nil
 }
 
@@ -767,14 +772,19 @@ func (s *Store) CreatePost(threadID, authorID int64, body string) (*forum.Post, 
 	if err != nil {
 		return nil, err
 	}
-	if forum.ThreadHiddenFromMembers(posts) {
-		actor, aerr := s.MemberByID(authorID)
-		if aerr != nil {
-			return nil, aerr
-		}
-		if !forum.CanHidePost(actor) {
-			return nil, forum.ErrCannotReply
-		}
+	th, err := s.ThreadByID(threadID)
+	if err != nil {
+		return nil, err
+	}
+	actor, aerr := s.MemberByID(authorID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if forum.ThreadHiddenFromMembers(posts) && !forum.CanHidePost(actor) {
+		return nil, forum.ErrCannotReply
+	}
+	if !forum.CanReply(actor, th) {
+		return nil, forum.ErrCannotReply
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
