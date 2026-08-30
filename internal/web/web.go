@@ -137,6 +137,9 @@ type page struct {
 	UnreadNotices  int
 	Profile        *forum.Member
 	ProfileRole    string
+	ProfileOwn     bool
+	ProfileTab     string
+	AuthorPosts    []forum.AuthorPostView
 }
 
 type memberVM struct {
@@ -317,12 +320,28 @@ func (s *Server) getProfile(w http.ResponseWriter, r *http.Request, m *forum.Mem
 		http.NotFound(w, r)
 		return
 	}
-	threads, err := s.store.ListThreadsByAuthor(m, target.ID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	own := m.ID == target.ID
+	tab := r.URL.Query().Get("tab")
+	if tab != "posts" || !own {
+		tab = "threads"
 	}
-	s.render(w, "profile.html", page{Member: m, Profile: target, ProfileRole: forum.RoleLabel(target.Role), Threads: threads})
+	pg := page{Member: m, Profile: target, ProfileRole: forum.RoleLabel(target.Role), ProfileOwn: own, ProfileTab: tab}
+	if tab == "posts" {
+		posts, err := s.store.ListPostsByAuthor(m, target.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		pg.AuthorPosts = posts
+	} else {
+		threads, err := s.store.ListThreadsByAuthor(m, target.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		pg.Threads = threads
+	}
+	s.render(w, "profile.html", pg)
 }
 
 func (s *Server) getMe(w http.ResponseWriter, r *http.Request, m *forum.Member) {

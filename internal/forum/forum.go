@@ -121,6 +121,14 @@ type PostView struct {
 	AuthorRole        Role
 }
 
+type AuthorPostView struct {
+	Post
+	ThreadTitle   string
+	BoardName     string
+	BoardDisabled bool
+	ThreadHidden  bool
+}
+
 type InviteCode struct {
 	ID            int64
 	Code          string

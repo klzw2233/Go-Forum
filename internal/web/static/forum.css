@@ -52,6 +52,8 @@ ul.boards li, ul.threads li {
   border-bottom: 1px solid var(--line);
 }
 li.unread-notice { font-weight: 600; }
+.tabs { display: flex; gap: 1rem; }
+.tabs a.on { font-weight: 700; color: var(--fg); text-decoration: none; }
 .post {
   background: var(--card);
   border: 1px solid var(--line);

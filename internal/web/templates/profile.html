@@ -1,18 +1,38 @@
 {{define "title"}}{{.Profile.DisplayName}}{{end}}
 {{define "content"}}
 <h1>{{.Profile.DisplayName}} <b class="login">{{.Profile.LoginName}}</b>{{if .ProfileRole}} <span class="badge">{{.ProfileRole}}</span>{{end}}{{if .Profile.Suspended}} <span class="badge">已停用</span>{{end}}</h1>
-{{if eq .Member.ID .Profile.ID}}<p><a href="/me">改显示名和密码</a></p>{{end}}
-<h2>开过的主题</h2>
-{{if not .Threads}}<p class="muted">没有可见的主题。</p>{{end}}
-<ul class="threads">
-{{range .Threads}}
-  <li>
-    <span class="muted">{{.BoardName}}</span>
-    {{if .BoardDisabled}}<span class="badge">已停用</span>{{end}}
-    {{if .Unread}}<span class="badge">未读</span>{{end}}
-    {{if .Locked}}<span class="badge">已锁定</span>{{end}}
-    <a href="/threads/{{.ID}}">{{.Title}}</a>
-  </li>
+{{if .ProfileOwn}}<p><a href="/me">改显示名和密码</a></p>
+<p class="tabs">
+  <a href="/u/{{.Profile.LoginName}}"{{if eq .ProfileTab "threads"}} class="on"{{end}}>主题</a>
+  <a href="/u/{{.Profile.LoginName}}?tab=posts"{{if eq .ProfileTab "posts"}} class="on"{{end}}>帖</a>
+</p>
 {{end}}
-</ul>
+{{if eq .ProfileTab "posts"}}
+  {{if not .AuthorPosts}}<p class="muted">还没有帖。</p>{{end}}
+  <ul class="threads">
+  {{range .AuthorPosts}}
+    <li>
+      <span class="muted">{{.BoardName}}</span>
+      {{if .BoardDisabled}}<span class="badge">已停用</span>{{end}}
+      {{if .Hidden}}<span class="badge">已隐藏</span>{{end}}
+      {{if .ThreadHidden}}<span class="badge">主题不可见</span>{{end}}
+      <a href="/threads/{{.ThreadID}}#floor-{{.Floor}}">{{.ThreadTitle}} #{{.Floor}}</a>
+    </li>
+  {{end}}
+  </ul>
+{{else}}
+  {{if not .ProfileOwn}}<h2>开过的主题</h2>{{end}}
+  {{if not .Threads}}<p class="muted">没有可见的主题。</p>{{end}}
+  <ul class="threads">
+  {{range .Threads}}
+    <li>
+      <span class="muted">{{.BoardName}}</span>
+      {{if .BoardDisabled}}<span class="badge">已停用</span>{{end}}
+      {{if .Unread}}<span class="badge">未读</span>{{end}}
+      {{if .Locked}}<span class="badge">已锁定</span>{{end}}
+      <a href="/threads/{{.ID}}">{{.Title}}</a>
+    </li>
+  {{end}}
+  </ul>
+{{end}}
 {{end}}
