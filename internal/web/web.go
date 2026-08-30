@@ -767,6 +767,15 @@ func (s *Server) getThread(w http.ResponseWriter, r *http.Request, m *forum.Memb
 		s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, ThreadHidden: true})
 		return
 	}
+	maxFloor := 0
+	for _, p := range posts {
+		if p.Floor > maxFloor {
+			maxFloor = p.Floor
+		}
+	}
+	if maxFloor >= forum.FirstFloor {
+		_ = s.store.MarkThreadRead(m.ID, th.ID, maxFloor)
+	}
 	pg := page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts), ThreadHidden: hidden, CanEditTitle: forum.CanEditTitle(m, th, hidden)}
 	if th.TitleEditedAt != nil {
 		pg.TitleEdited = "标题已改 " + forum.FormatTimeUTC(*th.TitleEditedAt) + " UTC"

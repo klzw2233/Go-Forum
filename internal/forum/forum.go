@@ -109,6 +109,7 @@ type ThreadView struct {
 	FirstHidden       bool
 	BoardName         string
 	BoardDisabled     bool
+	Unread            bool
 }
 
 type PostView struct {
@@ -320,6 +321,18 @@ func CanSetRole(actor, target *Member) bool {
 
 func (t Thread) Pinned() bool {
 	return t.PinRank > 0
+}
+
+// ThreadUnread reports whether the viewer has not caught up to maxFloor.
+// seen is false when there is no thread_reads row.
+func ThreadUnread(lastReadFloor, maxFloor int, seen bool) bool {
+	if maxFloor < FirstFloor {
+		return false
+	}
+	if !seen {
+		return true
+	}
+	return lastReadFloor < maxFloor
 }
 
 func InviteUsable(c *InviteCode) error {

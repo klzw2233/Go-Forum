@@ -71,6 +71,13 @@ CREATE TABLE IF NOT EXISTS invite_codes (
 	used_at TEXT
 	);
 
+CREATE TABLE IF NOT EXISTS thread_reads (
+		member_id INTEGER NOT NULL REFERENCES members(id),
+		thread_id INTEGER NOT NULL REFERENCES threads(id),
+		last_read_floor INTEGER NOT NULL,
+		PRIMARY KEY (member_id, thread_id)
+	);
+
 	CREATE TABLE IF NOT EXISTS post_edits (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		post_id INTEGER NOT NULL REFERENCES posts(id),
@@ -106,6 +113,12 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE threads ADD COLUMN pin_rank INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE boards ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE members ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS thread_reads (
+			member_id INTEGER NOT NULL REFERENCES members(id),
+			thread_id INTEGER NOT NULL REFERENCES threads(id),
+			last_read_floor INTEGER NOT NULL,
+			PRIMARY KEY (member_id, thread_id)
+		)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -586,19 +599,37 @@ func (s *Store) CreateThread(boardID, authorID int64, title, body string) (*foru
 	return th, p, nil
 }
 
+func (s *Store) MarkThreadRead(memberID, threadID int64, floor int) error {
+	if memberID <= 0 || threadID <= 0 || floor < forum.FirstFloor {
+		return forum.ErrNotFound
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO thread_reads (member_id, thread_id, last_read_floor) VALUES (?, ?, ?)
+		ON CONFLICT(member_id, thread_id) DO UPDATE SET last_read_floor = excluded.last_read_floor
+	`, memberID, threadID, floor)
+	return err
+}
+
 func (s *Store) ListThreads(boardID int64, viewer *forum.Member) ([]forum.ThreadView, error) {
+	viewerID := int64(0)
+	if viewer != nil {
+		viewerID = viewer.ID
+	}
 	q := `
 		SELECT t.id, t.board_id, t.title, t.author_id, t.created_at, t.last_post_at, t.title_edited_at, t.pin_rank,
 		       m.login_name, m.display_name,
-		       COALESCE((SELECT p.hidden FROM posts p WHERE p.thread_id = t.id AND p.floor = 1), 0)
+		       COALESCE((SELECT p.hidden FROM posts p WHERE p.thread_id = t.id AND p.floor = 1), 0),
+		       COALESCE((SELECT MAX(p.floor) FROM posts p WHERE p.thread_id = t.id), 0),
+		       r.last_read_floor
 		FROM threads t
 		JOIN members m ON m.id = t.author_id
+		LEFT JOIN thread_reads r ON r.thread_id = t.id AND r.member_id = ?
 		WHERE t.board_id = ?
 		ORDER BY CASE WHEN t.pin_rank > 0 THEN 0 ELSE 1 END,
 		         CASE WHEN t.pin_rank > 0 THEN t.pin_rank ELSE 0 END,
 		         t.last_post_at DESC, t.id DESC
 	`
-	rows, err := s.db.Query(q, boardID)
+	rows, err := s.db.Query(q, viewerID, boardID)
 	if err != nil {
 		return nil, err
 	}
@@ -608,20 +639,22 @@ func (s *Store) ListThreads(boardID int64, viewer *forum.Member) ([]forum.Thread
 		var v forum.ThreadView
 		var created, last string
 		var titleEdited sql.NullString
-		var hidden int
-		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &titleEdited, &v.PinRank, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden); err != nil {
+		var hidden, maxFloor int
+		var lastRead sql.NullInt64
+		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &titleEdited, &v.PinRank, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden, &maxFloor, &lastRead); err != nil {
 			return nil, err
 		}
 		v.CreatedAt = parseTime(created)
 		v.LastPostAt = parseTime(last)
 		if titleEdited.Valid && titleEdited.String != "" {
-			t := parseTime(titleEdited.String)
-			v.TitleEditedAt = &t
+			tm := parseTime(titleEdited.String)
+			v.TitleEditedAt = &tm
 		}
 		v.FirstHidden = hidden != 0
 		if v.FirstHidden && !forum.CanHidePost(viewer) {
 			continue
 		}
+		v.Unread = forum.ThreadUnread(int(lastRead.Int64), maxFloor, lastRead.Valid)
 		out = append(out, v)
 	}
 	return out, rows.Err()
@@ -634,14 +667,21 @@ func (s *Store) SearchThreads(viewer *forum.Member, query string) ([]forum.Threa
 	}
 	like := "%" + likeEscape(query) + "%"
 	staff := forum.CanHidePost(viewer)
+	viewerID := int64(0)
+	if viewer != nil {
+		viewerID = viewer.ID
+	}
 	q := `
 		SELECT t.id, t.board_id, t.title, t.author_id, t.created_at, t.last_post_at, t.title_edited_at, t.pin_rank,
 		       m.login_name, m.display_name,
 		       COALESCE((SELECT p.hidden FROM posts p WHERE p.thread_id = t.id AND p.floor = 1), 0),
-		       b.name, b.disabled
+		       b.name, b.disabled,
+		       COALESCE((SELECT MAX(p.floor) FROM posts p WHERE p.thread_id = t.id), 0),
+		       r.last_read_floor
 		FROM threads t
 		JOIN members m ON m.id = t.author_id
 		JOIN boards b ON b.id = t.board_id
+		LEFT JOIN thread_reads r ON r.thread_id = t.id AND r.member_id = ?
 		WHERE (t.title LIKE ? ESCAPE '\'
 		    OR EXISTS (
 		        SELECT 1 FROM posts p
@@ -656,7 +696,7 @@ func (s *Store) SearchThreads(viewer *forum.Member, query string) ([]forum.Threa
 	if staff {
 		staffN = 1
 	}
-	rows, err := s.db.Query(q, like, like, staffN, staffN)
+	rows, err := s.db.Query(q, viewerID, like, like, staffN, staffN)
 	if err != nil {
 		return nil, err
 	}
@@ -666,8 +706,9 @@ func (s *Store) SearchThreads(viewer *forum.Member, query string) ([]forum.Threa
 		var v forum.ThreadView
 		var created, last string
 		var titleEdited sql.NullString
-		var hidden, disabled int
-		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &titleEdited, &v.PinRank, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden, &v.BoardName, &disabled); err != nil {
+		var hidden, disabled, maxFloor int
+		var lastRead sql.NullInt64
+		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &titleEdited, &v.PinRank, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden, &v.BoardName, &disabled, &maxFloor, &lastRead); err != nil {
 			return nil, err
 		}
 		v.CreatedAt = parseTime(created)
@@ -681,6 +722,7 @@ func (s *Store) SearchThreads(viewer *forum.Member, query string) ([]forum.Threa
 		if v.FirstHidden && !staff {
 			continue
 		}
+		v.Unread = forum.ThreadUnread(int(lastRead.Int64), maxFloor, lastRead.Valid)
 		out = append(out, v)
 	}
 	return out, rows.Err()

@@ -169,6 +169,21 @@ func TestCanHidePost(t *testing.T) {
 	}
 }
 
+func TestThreadUnread(t *testing.T) {
+	if ThreadUnread(0, 0, false) {
+		t.Fatal("no floors")
+	}
+	if !ThreadUnread(0, 1, false) {
+		t.Fatal("never opened")
+	}
+	if ThreadUnread(2, 2, true) {
+		t.Fatal("caught up")
+	}
+	if !ThreadUnread(1, 2, true) {
+		t.Fatal("new floor")
+	}
+}
+
 func TestThreadHiddenFromMembers(t *testing.T) {
 	if ThreadHiddenFromMembers([]PostView{{Post: Post{Floor: 1, Hidden: false}}}) {
 		t.Fatal("visible first floor")
