@@ -193,6 +193,39 @@ func TestCanPin(t *testing.T) {
 	}
 }
 
+func TestCanSuspend(t *testing.T) {
+	founder := &Member{ID: 1, Role: RoleFounder}
+	op := &Member{ID: 2, Role: RoleOperator}
+	op2 := &Member{ID: 5, Role: RoleOperator}
+	mem := &Member{ID: 3, Role: RoleMember}
+	mem2 := &Member{ID: 4, Role: RoleMember}
+
+	if CanSuspend(nil, mem) || CanSuspend(founder, nil) {
+		t.Fatal("nil")
+	}
+	if CanSuspend(founder, founder) || CanSuspend(op, op) || CanSuspend(mem, mem) {
+		t.Fatal("self")
+	}
+	if CanSuspend(op, founder) || CanSuspend(mem, founder) {
+		t.Fatal("founder is unsuspendable")
+	}
+	if CanSuspend(op, op2) || CanSuspend(mem, op) {
+		t.Fatal("operator cannot be suspended by non-founder")
+	}
+	if CanSuspend(mem, mem2) {
+		t.Fatal("member cannot suspend")
+	}
+	if !CanSuspend(founder, op) {
+		t.Fatal("founder must suspend operator")
+	}
+	if !CanSuspend(founder, mem) {
+		t.Fatal("founder must suspend member")
+	}
+	if !CanSuspend(op, mem) {
+		t.Fatal("operator must suspend member")
+	}
+}
+
 func TestCanSeeBoard(t *testing.T) {
 	open := &Board{}
 	closed := &Board{Disabled: true}

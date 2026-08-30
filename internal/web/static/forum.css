@@ -60,8 +60,8 @@ ul.boards li, ul.threads li {
 .post .body pre { overflow: auto; background: #f5f5f4; padding: 0.5rem; }
 .crumb { color: var(--muted); }
 code.invite { font-size: 1.05em; user-select: all; }
-table.invites { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-table.invites th, table.invites td {
+table.invites, table.members { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+table.invites th, table.invites td, table.members th, table.members td {
   text-align: left;
   padding: 0.4rem 0.5rem;
   border-bottom: 1px solid var(--line);

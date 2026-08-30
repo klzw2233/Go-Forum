@@ -1,0 +1,27 @@
+{{define "title"}}会员{{end}}
+{{define "content"}}
+<h1>会员</h1>
+<table class="members">
+  <thead>
+    <tr><th>登录名</th><th>显示名</th><th>身份</th><th></th></tr>
+  </thead>
+  <tbody>
+  {{range .Members}}
+    <tr>
+      <td><b class="login">{{.LoginName}}</b></td>
+      <td>{{.DisplayName}}</td>
+      <td>{{if .RoleLabel}}<span class="badge">{{.RoleLabel}}</span>{{end}}{{if .Suspended}} <span class="badge">已停用</span>{{end}}</td>
+      <td>
+        {{if .CanSuspend}}
+          {{if .Suspended}}
+          <form class="inline" method="post" action="/members/{{.ID}}/unsuspend"><button type="submit">恢复</button></form>
+          {{else}}
+          <form class="inline" method="post" action="/members/{{.ID}}/suspend"><button type="submit">停用</button></form>
+          {{end}}
+        {{end}}
+      </td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}

@@ -642,3 +642,77 @@ func titles(in []forum.ThreadView) []string {
 	}
 	return out
 }
+
+func TestSetMemberSuspended(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "suspendcode01"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("suspendcode01", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, _, err := s.CreateThread(b.ID, mem.ID, "旧帖", "还在")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateSession(mem.ID, "tok", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.SetMemberSuspended(mem, mem.ID, true); err != forum.ErrCannotSuspend {
+		t.Fatalf("self: %v", err)
+	}
+	if _, err := s.SetMemberSuspended(f, f.ID, true); err != forum.ErrCannotSuspend {
+		t.Fatalf("founder self: %v", err)
+	}
+	if _, err := s.SetMemberSuspended(mem, f.ID, true); err != forum.ErrCannotSuspend {
+		t.Fatalf("member vs founder: %v", err)
+	}
+	if _, err := s.SetMemberSuspended(f, mem.ID+99, true); err != forum.ErrNotFound {
+		t.Fatalf("unknown: %v", err)
+	}
+
+	got, err := s.SetMemberSuspended(f, mem.ID, true)
+	if err != nil || !got.Suspended {
+		t.Fatalf("suspend: %+v err=%v", got, err)
+	}
+	if _, err := s.MemberBySession("tok"); err != forum.ErrNotFound {
+		t.Fatalf("session after suspend: %v", err)
+	}
+	again, err := s.MemberByID(mem.ID)
+	if err != nil || !again.Suspended || again.LoginName != "wang" {
+		t.Fatalf("MemberByID: %+v err=%v", again, err)
+	}
+	if _, err := s.IssueInvite(f, "suspendcode02"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Register("suspendcode02", "wang", "另一个王", h); err != forum.ErrLoginNameTaken {
+		t.Fatalf("login name released: %v", err)
+	}
+	posts, err := s.ListPosts(th.ID)
+	if err != nil || len(posts) != 1 || posts[0].BodyMarkdown != "还在" || posts[0].Hidden {
+		t.Fatalf("old post changed: %+v err=%v", posts, err)
+	}
+
+	back, err := s.SetMemberSuspended(f, mem.ID, false)
+	if err != nil || back.Suspended {
+		t.Fatalf("restore: %+v err=%v", back, err)
+	}
+	if err := s.CreateSession(mem.ID, "tok2", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	live, err := s.MemberBySession("tok2")
+	if err != nil || live.ID != mem.ID || live.Suspended {
+		t.Fatalf("session after restore: %+v err=%v", live, err)
+	}
+}
