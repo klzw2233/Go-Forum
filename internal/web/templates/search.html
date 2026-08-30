@@ -1,0 +1,20 @@
+{{define "title"}}搜索{{end}}
+{{define "content"}}
+<h1>搜索</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+{{if .Query}}
+  {{if not .Threads}}<p class="muted">没有匹配「{{.Query}}」的主题。</p>{{end}}
+  <ul class="threads">
+  {{range .Threads}}
+    <li>
+      <span class="muted">{{.BoardName}}</span>
+      {{if .BoardDisabled}}<span class="badge">已停用</span>{{end}}
+      <a href="/threads/{{.ID}}">{{.Title}}</a>
+      <span class="muted">{{.AuthorDisplayName}} <b class="login">{{.AuthorLoginName}}</b></span>
+    </li>
+  {{end}}
+  </ul>
+{{else}}
+  <p class="muted">在顶栏输入关键词。</p>
+{{end}}
+{{end}}

@@ -33,7 +33,7 @@ type Server struct {
 
 func New(st *store.Store) (*Server, error) {
 	s := &Server{store: st, mux: http.NewServeMux(), tpl: map[string]*template.Template{}}
-	pages := []string{"login.html", "home.html", "board_new.html", "board_edit.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "me.html", "post_edit.html", "post_edits.html", "title_edit.html"}
+	pages := []string{"login.html", "home.html", "board_new.html", "board_edit.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "me.html", "search.html", "post_edit.html", "post_edits.html", "title_edit.html"}
 	for _, p := range pages {
 		t, err := template.ParseFS(embedded, "templates/layout.html", "templates/"+p)
 		if err != nil {
@@ -55,6 +55,7 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("POST /me/display", s.requireMember(s.postMeDisplay))
 	s.mux.HandleFunc("POST /me/password", s.requireMember(s.postMePassword))
 	s.mux.HandleFunc("GET /{$}", s.requireMember(s.getHome))
+	s.mux.HandleFunc("GET /search", s.requireMember(s.getSearch))
 	s.mux.HandleFunc("GET /invites", s.requireMember(s.getInvites))
 	s.mux.HandleFunc("POST /invites", s.requireMember(s.postInvites))
 	s.mux.HandleFunc("POST /invites/{id}/revoke", s.requireMember(s.postRevokeInvite))
@@ -123,6 +124,7 @@ type page struct {
 	CanMoveThread  bool
 	Members        []memberVM
 	Target         *forum.Member
+	Query          string
 }
 
 type memberVM struct {
@@ -353,6 +355,26 @@ func (s *Server) getHome(w http.ResponseWriter, r *http.Request, m *forum.Member
 		boards = visible
 	}
 	s.render(w, "home.html", page{Member: m, Boards: boards})
+}
+
+func (s *Server) getSearch(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	pg := page{Member: m, Query: q}
+	if q == "" {
+		s.render(w, "search.html", pg)
+		return
+	}
+	threads, err := s.store.SearchThreads(m, q)
+	if err == forum.ErrSearchEmpty {
+		s.render(w, "search.html", pg)
+		return
+	}
+	if err != nil {
+		s.render(w, "search.html", page{Member: m, Query: q, Error: publicErr(err)})
+		return
+	}
+	pg.Threads = threads
+	s.render(w, "search.html", pg)
 }
 
 func (s *Server) getInvites(w http.ResponseWriter, r *http.Request, m *forum.Member) {
@@ -859,6 +881,8 @@ func publicErr(err error) string {
 		return "版块名太长"
 	case forum.ErrBoardDescLong:
 		return "版块说明太长"
+	case forum.ErrSearchLong:
+		return "搜索词太长"
 	default:
 		return err.Error()
 	}

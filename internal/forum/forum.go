@@ -25,6 +25,7 @@ const (
 	maxThreadTitle  = 120
 	maxPostBody     = 64 * 1024
 	minLoginNameLen = 1
+	maxSearchQuery  = 80
 )
 
 var (
@@ -57,6 +58,8 @@ var (
 	ErrCannotSuspend     = errors.New("cannot suspend this member")
 	ErrCannotSetRole     = errors.New("cannot change this role")
 	ErrCannotSetPassword = errors.New("cannot set this password")
+	ErrSearchEmpty       = errors.New("search query is empty")
+	ErrSearchLong        = errors.New("search query is too long")
 )
 
 type Member struct {
@@ -104,6 +107,8 @@ type ThreadView struct {
 	AuthorLoginName   string
 	AuthorDisplayName string
 	FirstHidden       bool
+	BoardName         string
+	BoardDisabled     bool
 }
 
 type PostView struct {
@@ -195,6 +200,17 @@ func NormalizeTitle(s string) (string, error) {
 	}
 	if utf8.RuneCountInString(s) > maxThreadTitle {
 		return "", ErrTitleLong
+	}
+	return s, nil
+}
+
+func NormalizeSearch(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", ErrSearchEmpty
+	}
+	if utf8.RuneCountInString(s) > maxSearchQuery {
+		return "", ErrSearchLong
 	}
 	return s, nil
 }
