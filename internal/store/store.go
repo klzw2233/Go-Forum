@@ -290,6 +290,46 @@ func (s *Store) SetMemberSuspended(actor *forum.Member, id int64, suspended bool
 	return s.MemberByID(id)
 }
 
+func (s *Store) SetMemberRole(actor *forum.Member, id int64, role forum.Role) (*forum.Member, error) {
+	if role != forum.RoleMember && role != forum.RoleOperator {
+		return nil, forum.ErrCannotSetRole
+	}
+	target, err := s.MemberByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if !forum.CanSetRole(actor, target) {
+		return nil, forum.ErrCannotSetRole
+	}
+	if target.Role == role {
+		return target, nil
+	}
+	if _, err := s.db.Exec(`UPDATE members SET role = ? WHERE id = ?`, string(role), id); err != nil {
+		return nil, err
+	}
+	return s.MemberByID(id)
+}
+
+func (s *Store) SetMemberPassword(actor *forum.Member, id int64, passwordHash string) (*forum.Member, error) {
+	if passwordHash == "" {
+		return nil, forum.ErrPasswordEmpty
+	}
+	target, err := s.MemberByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if !forum.CanSetPassword(actor, target) {
+		return nil, forum.ErrCannotSetPassword
+	}
+	if _, err := s.db.Exec(`UPDATE members SET password_hash = ? WHERE id = ?`, passwordHash, id); err != nil {
+		return nil, err
+	}
+	if err := s.deleteSessionsForMember(id); err != nil {
+		return nil, err
+	}
+	return s.MemberByID(id)
+}
+
 func (s *Store) CreateBoard(name, description string) (*forum.Board, error) {
 	name, err := forum.NormalizeBoardName(name)
 	if err != nil {

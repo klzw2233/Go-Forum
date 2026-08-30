@@ -716,3 +716,70 @@ func TestSetMemberSuspended(t *testing.T) {
 		t.Fatalf("session after restore: %+v err=%v", live, err)
 	}
 }
+
+func TestSetMemberRoleAndPassword(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("oldpass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "rolecodeaaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("rolecodeaaaaaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateSession(mem.ID, "tok", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.SetMemberRole(mem, mem.ID, forum.RoleOperator); err != forum.ErrCannotSetRole {
+		t.Fatalf("member promote self: %v", err)
+	}
+	if _, err := s.SetMemberRole(f, f.ID, forum.RoleOperator); err != forum.ErrCannotSetRole {
+		t.Fatalf("founder demote self: %v", err)
+	}
+	if _, err := s.SetMemberRole(f, mem.ID, forum.RoleFounder); err != forum.ErrCannotSetRole {
+		t.Fatalf("promote to founder: %v", err)
+	}
+
+	got, err := s.SetMemberRole(f, mem.ID, forum.RoleOperator)
+	if err != nil || got.Role != forum.RoleOperator {
+		t.Fatalf("promote: %+v err=%v", got, err)
+	}
+	same, err := s.SetMemberRole(f, mem.ID, forum.RoleOperator)
+	if err != nil || same.Role != forum.RoleOperator {
+		t.Fatalf("promote noop: %+v err=%v", same, err)
+	}
+	if _, err := s.SetMemberPassword(got, f.ID, "x"); err != forum.ErrCannotSetPassword {
+		t.Fatalf("operator set founder password: %v", err)
+	}
+	if _, err := s.SetMemberRole(got, mem.ID, forum.RoleMember); err != forum.ErrCannotSetRole {
+		t.Fatalf("operator demote: %v", err)
+	}
+
+	nh, err := forum.HashPassword("newpass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetMemberPassword(f, mem.ID, nh); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MemberBySession("tok"); err != forum.ErrNotFound {
+		t.Fatalf("session after password: %v", err)
+	}
+	_, hash, err := s.MemberByLogin("wang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !forum.CheckPassword(hash, "newpass") || forum.CheckPassword(hash, "oldpass") {
+		t.Fatal("password not replaced")
+	}
+
+	back, err := s.SetMemberRole(f, mem.ID, forum.RoleMember)
+	if err != nil || back.Role != forum.RoleMember {
+		t.Fatalf("demote: %+v err=%v", back, err)
+	}
+}

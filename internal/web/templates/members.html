@@ -12,6 +12,14 @@
       <td>{{.DisplayName}}</td>
       <td>{{if .RoleLabel}}<span class="badge">{{.RoleLabel}}</span>{{end}}{{if .Suspended}} <span class="badge">已停用</span>{{end}}</td>
       <td>
+        {{if .CanSetRole}}
+          {{if eq .Role "member"}}
+          <form class="inline" method="post" action="/members/{{.ID}}/promote"><button type="submit">升为运营者</button></form>
+          {{else if eq .Role "operator"}}
+          <form class="inline" method="post" action="/members/{{.ID}}/demote"><button type="submit">取消运营者</button></form>
+          {{end}}
+        {{end}}
+        {{if .CanSetPassword}}<a href="/members/{{.ID}}/password">设密码</a>{{end}}
         {{if .CanSuspend}}
           {{if .Suspended}}
           <form class="inline" method="post" action="/members/{{.ID}}/unsuspend"><button type="submit">恢复</button></form>

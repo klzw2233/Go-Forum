@@ -226,6 +226,33 @@ func TestCanSuspend(t *testing.T) {
 	}
 }
 
+func TestCanSetPassword(t *testing.T) {
+	founder := &Member{ID: 1, Role: RoleFounder}
+	op := &Member{ID: 2, Role: RoleOperator}
+	mem := &Member{ID: 3, Role: RoleMember}
+	if CanSetPassword(op, op) || CanSetPassword(op, founder) || CanSetPassword(mem, mem) {
+		t.Fatal("password matrix deny")
+	}
+	if !CanSetPassword(founder, op) || !CanSetPassword(founder, mem) || !CanSetPassword(op, mem) {
+		t.Fatal("password matrix allow")
+	}
+}
+
+func TestCanSetRole(t *testing.T) {
+	founder := &Member{ID: 1, Role: RoleFounder}
+	op := &Member{ID: 2, Role: RoleOperator}
+	mem := &Member{ID: 3, Role: RoleMember}
+	if CanSetRole(nil, mem) || CanSetRole(founder, nil) || CanSetRole(founder, founder) {
+		t.Fatal("nil or self")
+	}
+	if CanSetRole(op, mem) || CanSetRole(mem, op) {
+		t.Fatal("non-founder")
+	}
+	if !CanSetRole(founder, mem) || !CanSetRole(founder, op) {
+		t.Fatal("founder must set role")
+	}
+}
+
 func TestCanSeeBoard(t *testing.T) {
 	open := &Board{}
 	closed := &Board{Disabled: true}

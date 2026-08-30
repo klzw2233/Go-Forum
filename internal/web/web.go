@@ -33,7 +33,7 @@ type Server struct {
 
 func New(st *store.Store) (*Server, error) {
 	s := &Server{store: st, mux: http.NewServeMux(), tpl: map[string]*template.Template{}}
-	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "post_edit.html", "post_edits.html", "title_edit.html"}
+	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "post_edit.html", "post_edits.html", "title_edit.html"}
 	for _, p := range pages {
 		t, err := template.ParseFS(embedded, "templates/layout.html", "templates/"+p)
 		if err != nil {
@@ -58,6 +58,10 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("GET /members", s.requireMember(s.getMembers))
 	s.mux.HandleFunc("POST /members/{id}/suspend", s.requireMember(s.postSuspendMember))
 	s.mux.HandleFunc("POST /members/{id}/unsuspend", s.requireMember(s.postUnsuspendMember))
+	s.mux.HandleFunc("POST /members/{id}/promote", s.requireMember(s.postPromoteMember))
+	s.mux.HandleFunc("POST /members/{id}/demote", s.requireMember(s.postDemoteMember))
+	s.mux.HandleFunc("GET /members/{id}/password", s.requireMember(s.getMemberPassword))
+	s.mux.HandleFunc("POST /members/{id}/password", s.requireMember(s.postMemberPassword))
 	s.mux.HandleFunc("GET /boards/new", s.requireMember(s.getBoardNew))
 	s.mux.HandleFunc("POST /boards/new", s.requireMember(s.postBoardNew))
 	s.mux.HandleFunc("GET /boards/{id}", s.requireMember(s.getBoard))
@@ -111,12 +115,15 @@ type page struct {
 	CanPin         bool
 	CanMoveThread  bool
 	Members        []memberVM
+	Target         *forum.Member
 }
 
 type memberVM struct {
 	forum.Member
-	RoleLabel  string
-	CanSuspend bool
+	RoleLabel      string
+	CanSuspend     bool
+	CanSetRole     bool
+	CanSetPassword bool
 }
 
 type postVM struct {
@@ -365,9 +372,11 @@ func (s *Server) getMembers(w http.ResponseWriter, r *http.Request, m *forum.Mem
 	for i := range list {
 		mem := list[i]
 		vms = append(vms, memberVM{
-			Member:     mem,
-			RoleLabel:  forum.RoleLabel(mem.Role),
-			CanSuspend: forum.CanSuspend(m, &mem),
+			Member:         mem,
+			RoleLabel:      forum.RoleLabel(mem.Role),
+			CanSuspend:     forum.CanSuspend(m, &mem),
+			CanSetRole:     forum.CanSetRole(m, &mem),
+			CanSetPassword: forum.CanSetPassword(m, &mem),
 		})
 	}
 	s.render(w, "members.html", page{Member: m, Members: vms})
@@ -401,6 +410,82 @@ func (s *Server) setMemberSuspended(w http.ResponseWriter, r *http.Request, m *f
 		http.NotFound(w, r)
 	default:
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) postPromoteMember(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.setMemberRole(w, r, m, forum.RoleOperator)
+}
+
+func (s *Server) postDemoteMember(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.setMemberRole(w, r, m, forum.RoleMember)
+}
+
+func (s *Server) setMemberRole(w http.ResponseWriter, r *http.Request, m *forum.Member, role forum.Role) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	_, err := s.store.SetMemberRole(m, id, role)
+	switch err {
+	case nil:
+		http.Redirect(w, r, "/members", http.StatusSeeOther)
+	case forum.ErrCannotSetRole:
+		http.Error(w, "不能改这个身份", http.StatusForbidden)
+	case forum.ErrNotFound:
+		http.NotFound(w, r)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) getMemberPassword(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.memberPassword(w, r, m, false)
+}
+
+func (s *Server) postMemberPassword(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.memberPassword(w, r, m, true)
+}
+
+func (s *Server) memberPassword(w http.ResponseWriter, r *http.Request, m *forum.Member, save bool) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	target, err := s.store.MemberByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !forum.CanSetPassword(m, target) {
+		http.Error(w, "不能给这个会员设密码", http.StatusForbidden)
+		return
+	}
+	if !save {
+		s.render(w, "member_password.html", page{Member: m, Target: target})
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.render(w, "member_password.html", page{Member: m, Target: target, Error: "表单无效"})
+		return
+	}
+	hash, err := forum.HashPassword(r.FormValue("password"))
+	if err != nil {
+		s.render(w, "member_password.html", page{Member: m, Target: target, Error: publicErr(err)})
+		return
+	}
+	_, err = s.store.SetMemberPassword(m, target.ID, hash)
+	switch err {
+	case nil:
+		http.Redirect(w, r, "/members", http.StatusSeeOther)
+	case forum.ErrCannotSetPassword:
+		http.Error(w, "不能给这个会员设密码", http.StatusForbidden)
+	case forum.ErrNotFound:
+		http.NotFound(w, r)
+	default:
+		s.render(w, "member_password.html", page{Member: m, Target: target, Error: publicErr(err)})
 	}
 }
 
@@ -638,6 +723,10 @@ func publicErr(err error) string {
 		return "只有创始人或运营者能挪主题"
 	case forum.ErrCannotSuspend:
 		return "不能停用这个会员"
+	case forum.ErrCannotSetRole:
+		return "不能改这个身份"
+	case forum.ErrCannotSetPassword:
+		return "不能给这个会员设密码"
 	default:
 		return err.Error()
 	}
