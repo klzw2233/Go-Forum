@@ -51,6 +51,7 @@ ul.boards li, ul.threads li {
   padding: 0.6rem 0;
   border-bottom: 1px solid var(--line);
 }
+li.unread-notice { font-weight: 600; }
 .post {
   background: var(--card);
   border: 1px solid var(--line);

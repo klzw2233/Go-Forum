@@ -1125,3 +1125,83 @@ func TestLockThread(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNotifications(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "noticodeaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	wang, err := s.Register("noticodeaaaaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "noticodebbbbb"); err != nil {
+		t.Fatal(err)
+	}
+	zhao, err := s.Register("noticodebbbbb", "zhao", "老赵", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, _, err := s.CreateThread(b.ID, wang.ID, "主题", "一楼 @zhao 你好")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListNotifications(zhao.ID)
+	if err != nil || len(list) != 1 || list[0].Kind != forum.NotifyMention {
+		t.Fatalf("mention: %+v err=%v", list, err)
+	}
+	self, err := s.ListNotifications(wang.ID)
+	if err != nil || len(self) != 0 {
+		t.Fatalf("self mention: %+v", self)
+	}
+
+	if _, err := s.CreatePost(th.ID, zhao.ID, "回你"); err != nil {
+		t.Fatal(err)
+	}
+	self, err = s.ListNotifications(wang.ID)
+	if err != nil || len(self) != 1 || self[0].Kind != forum.NotifyReply {
+		t.Fatalf("reply: %+v err=%v", self, err)
+	}
+
+	n, err := s.UnreadNotificationCount(zhao.ID)
+	if err != nil || n != 1 {
+		t.Fatalf("unread %d err=%v", n, err)
+	}
+	got, err := s.MarkNotificationRead(zhao.ID, list[0].ID)
+	if err != nil || !got.Read {
+		t.Fatalf("mark: %+v err=%v", got, err)
+	}
+	n, err = s.UnreadNotificationCount(zhao.ID)
+	if err != nil || n != 0 {
+		t.Fatalf("after read %d", n)
+	}
+
+	closed, err := s.CreateBoard("密室", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetBoardDisabled(f, closed.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.CreateThread(closed.ID, f.ID, "密", "只有 @wang"); err != nil {
+		t.Fatal(err)
+	}
+	list, err = s.ListNotifications(wang.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range list {
+		if n.Kind == forum.NotifyMention && n.ThreadTitle == "密" {
+			t.Fatal("member notified in disabled board")
+		}
+	}
+}

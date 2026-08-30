@@ -33,7 +33,7 @@ type Server struct {
 
 func New(st *store.Store) (*Server, error) {
 	s := &Server{store: st, mux: http.NewServeMux(), tpl: map[string]*template.Template{}}
-	pages := []string{"login.html", "home.html", "board_new.html", "board_edit.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "me.html", "search.html", "post_edit.html", "post_edits.html", "title_edit.html"}
+	pages := []string{"login.html", "home.html", "board_new.html", "board_edit.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "me.html", "search.html", "notifications.html", "post_edit.html", "post_edits.html", "title_edit.html"}
 	for _, p := range pages {
 		t, err := template.ParseFS(embedded, "templates/layout.html", "templates/"+p)
 		if err != nil {
@@ -56,6 +56,9 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("POST /me/password", s.requireMember(s.postMePassword))
 	s.mux.HandleFunc("GET /{$}", s.requireMember(s.getHome))
 	s.mux.HandleFunc("GET /search", s.requireMember(s.getSearch))
+	s.mux.HandleFunc("GET /notifications", s.requireMember(s.getNotifications))
+	s.mux.HandleFunc("POST /notifications/{id}/read", s.requireMember(s.postNotificationRead))
+	s.mux.HandleFunc("POST /notifications/read-all", s.requireMember(s.postNotificationsReadAll))
 	s.mux.HandleFunc("GET /invites", s.requireMember(s.getInvites))
 	s.mux.HandleFunc("POST /invites", s.requireMember(s.postInvites))
 	s.mux.HandleFunc("POST /invites/{id}/revoke", s.requireMember(s.postRevokeInvite))
@@ -129,6 +132,8 @@ type page struct {
 	Members        []memberVM
 	Target         *forum.Member
 	Query          string
+	Notifications  []forum.Notification
+	UnreadNotices  int
 }
 
 type memberVM struct {
@@ -192,6 +197,9 @@ func (s *Server) render(w http.ResponseWriter, name string, p page) {
 		p.CanPin = forum.CanPin(p.Member)
 		p.CanMoveThread = forum.CanMoveThread(p.Member)
 		p.CanLock = forum.CanLock(p.Member)
+		if n, err := s.store.UnreadNotificationCount(p.Member.ID); err == nil {
+			p.UnreadNotices = n
+		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout.html", p); err != nil {
@@ -380,6 +388,41 @@ func (s *Server) getSearch(w http.ResponseWriter, r *http.Request, m *forum.Memb
 	}
 	pg.Threads = threads
 	s.render(w, "search.html", pg)
+}
+
+func (s *Server) getNotifications(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	list, err := s.store.ListNotifications(m.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.render(w, "notifications.html", page{Member: m, Notifications: list})
+}
+
+func (s *Server) postNotificationRead(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	n, err := s.store.MarkNotificationRead(m.ID, id)
+	if err == forum.ErrNotFound {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/threads/"+strconv.FormatInt(n.ThreadID, 10)+"#floor-"+strconv.Itoa(n.Floor), http.StatusSeeOther)
+}
+
+func (s *Server) postNotificationsReadAll(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	if err := s.store.MarkAllNotificationsRead(m.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/notifications", http.StatusSeeOther)
 }
 
 func (s *Server) getInvites(w http.ResponseWriter, r *http.Request, m *forum.Member) {
