@@ -850,3 +850,59 @@ func TestUpdateAndMoveBoard(t *testing.T) {
 		t.Fatalf("after up: %+v", list)
 	}
 }
+
+func TestUpdateDisplayNameAndOwnPassword(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("oldpass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "mecodeaaaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("mecodeaaaaaaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, _, err := s.CreateThread(b.ID, mem.ID, "帖", "正文")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateDisplayName(mem.ID, "   "); err != forum.ErrDisplayNameEmpty {
+		t.Fatalf("empty display: %v", err)
+	}
+	got, err := s.UpdateDisplayName(mem.ID, " 大王 ")
+	if err != nil || got.DisplayName != "大王" || got.LoginName != "wang" {
+		t.Fatalf("display: %+v err=%v", got, err)
+	}
+	posts, err := s.ListPosts(th.ID)
+	if err != nil || len(posts) != 1 || posts[0].AuthorDisplayName != "大王" || posts[0].AuthorLoginName != "wang" {
+		t.Fatalf("old post names: %+v err=%v", posts, err)
+	}
+
+	if err := s.CreateSession(mem.ID, "tok", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	nh, err := forum.HashPassword("newpass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ChangeOwnPassword(mem.ID, nh); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MemberBySession("tok"); err != forum.ErrNotFound {
+		t.Fatalf("session after own password: %v", err)
+	}
+	_, hash, err := s.MemberByLogin("wang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !forum.CheckPassword(hash, "newpass") || forum.CheckPassword(hash, "oldpass") {
+		t.Fatal("password not replaced")
+	}
+}

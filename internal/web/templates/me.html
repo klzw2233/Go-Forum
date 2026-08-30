@@ -1,0 +1,15 @@
+{{define "title"}}我{{end}}
+{{define "content"}}
+<h1>我</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<p class="muted">登录名 <b class="login">{{.Member.LoginName}}</b> 不能改。</p>
+<form method="post" action="/me/display">
+  <label>显示名 <input name="display_name" value="{{.Member.DisplayName}}" required></label>
+  <button type="submit">保存显示名</button>
+</form>
+<form method="post" action="/me/password">
+  <label>旧密码 <input type="password" name="old_password" required></label>
+  <label>新密码 <input type="password" name="password" required></label>
+  <button type="submit">改密码</button>
+</form>
+{{end}}

@@ -245,6 +245,33 @@ func (s *Store) deleteSessionsForMember(memberID int64) error {
 	return err
 }
 
+func (s *Store) UpdateDisplayName(id int64, displayName string) (*forum.Member, error) {
+	displayName, err := forum.NormalizeDisplayName(displayName)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.MemberByID(id); err != nil {
+		return nil, err
+	}
+	if _, err := s.db.Exec(`UPDATE members SET display_name = ? WHERE id = ?`, displayName, id); err != nil {
+		return nil, err
+	}
+	return s.MemberByID(id)
+}
+
+func (s *Store) ChangeOwnPassword(id int64, passwordHash string) error {
+	if passwordHash == "" {
+		return forum.ErrPasswordEmpty
+	}
+	if _, err := s.MemberByID(id); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`UPDATE members SET password_hash = ? WHERE id = ?`, passwordHash, id); err != nil {
+		return err
+	}
+	return s.deleteSessionsForMember(id)
+}
+
 func (s *Store) ListMembers() ([]forum.Member, error) {
 	rows, err := s.db.Query(`SELECT id, login_name, display_name, role, suspended, created_at FROM members ORDER BY id ASC`)
 	if err != nil {

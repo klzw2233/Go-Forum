@@ -33,7 +33,7 @@ type Server struct {
 
 func New(st *store.Store) (*Server, error) {
 	s := &Server{store: st, mux: http.NewServeMux(), tpl: map[string]*template.Template{}}
-	pages := []string{"login.html", "home.html", "board_new.html", "board_edit.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "post_edit.html", "post_edits.html", "title_edit.html"}
+	pages := []string{"login.html", "home.html", "board_new.html", "board_edit.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "me.html", "post_edit.html", "post_edits.html", "title_edit.html"}
 	for _, p := range pages {
 		t, err := template.ParseFS(embedded, "templates/layout.html", "templates/"+p)
 		if err != nil {
@@ -51,6 +51,9 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("GET /register", s.getRegister)
 	s.mux.HandleFunc("POST /register", s.postRegister)
 	s.mux.HandleFunc("POST /logout", s.requireMember(s.postLogout))
+	s.mux.HandleFunc("GET /me", s.requireMember(s.getMe))
+	s.mux.HandleFunc("POST /me/display", s.requireMember(s.postMeDisplay))
+	s.mux.HandleFunc("POST /me/password", s.requireMember(s.postMePassword))
 	s.mux.HandleFunc("GET /{$}", s.requireMember(s.getHome))
 	s.mux.HandleFunc("GET /invites", s.requireMember(s.getInvites))
 	s.mux.HandleFunc("POST /invites", s.requireMember(s.postInvites))
@@ -283,6 +286,55 @@ func (s *Server) postLogout(w http.ResponseWriter, r *http.Request, _ *forum.Mem
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+func (s *Server) getMe(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.render(w, "me.html", page{Member: m})
+}
+
+func (s *Server) postMeDisplay(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	if err := r.ParseForm(); err != nil {
+		s.render(w, "me.html", page{Member: m, Error: "表单无效"})
+		return
+	}
+	_, err := s.store.UpdateDisplayName(m.ID, r.FormValue("display_name"))
+	if err != nil {
+		s.render(w, "me.html", page{Member: m, Error: publicErr(err)})
+		return
+	}
+	http.Redirect(w, r, "/me", http.StatusSeeOther)
+}
+
+func (s *Server) postMePassword(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	if err := r.ParseForm(); err != nil {
+		s.render(w, "me.html", page{Member: m, Error: "表单无效"})
+		return
+	}
+	oldPass := r.FormValue("old_password")
+	newPass := r.FormValue("password")
+	_, hash, err := s.store.MemberByLogin(m.LoginName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !forum.CheckPassword(hash, oldPass) {
+		s.render(w, "me.html", page{Member: m, Error: "旧密码不对"})
+		return
+	}
+	newHash, err := forum.HashPassword(newPass)
+	if err != nil {
+		s.render(w, "me.html", page{Member: m, Error: publicErr(err)})
+		return
+	}
+	if err := s.store.ChangeOwnPassword(m.ID, newHash); err != nil {
+		s.render(w, "me.html", page{Member: m, Error: publicErr(err)})
+		return
+	}
+	if err := s.loginAs(w, m); err != nil {
+		http.Error(w, "session", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/me", http.StatusSeeOther)
 }
 
 func (s *Server) getHome(w http.ResponseWriter, r *http.Request, m *forum.Member) {
@@ -773,8 +825,12 @@ func publicErr(err error) string {
 		return "登录名不合法"
 	case forum.ErrDisplayNameEmpty:
 		return "显示名不能为空"
-	case forum.ErrPasswordEmpty, forum.ErrBadPassword:
+	case forum.ErrDisplayNameLong:
+		return "显示名太长"
+	case forum.ErrPasswordEmpty:
 		return "密码不能为空"
+	case forum.ErrBadPassword:
+		return "旧密码不对"
 	case forum.ErrCannotEditPost:
 		return "不能编辑这篇帖"
 	case forum.ErrCannotViewEdits:
