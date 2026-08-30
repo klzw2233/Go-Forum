@@ -57,6 +57,22 @@ func TestNormalizeNewThread(t *testing.T) {
 	}
 }
 
+func TestNormalizeSearch(t *testing.T) {
+	if _, err := NormalizeSearch(""); err != ErrSearchEmpty {
+		t.Fatalf("empty: %v", err)
+	}
+	if _, err := NormalizeSearch("   "); err != ErrSearchEmpty {
+		t.Fatalf("blank: %v", err)
+	}
+	q, err := NormalizeSearch("  hello  ")
+	if err != nil || q != "hello" {
+		t.Fatalf("trim: %q %v", q, err)
+	}
+	if _, err := NormalizeSearch(strings.Repeat("a", 81)); err != ErrSearchLong {
+		t.Fatalf("long: %v", err)
+	}
+}
+
 func TestFloorNumbers(t *testing.T) {
 	if FirstFloor != 1 {
 		t.Fatalf("FirstFloor = %d, want 1", FirstFloor)

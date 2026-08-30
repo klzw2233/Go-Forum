@@ -627,6 +627,72 @@ func (s *Store) ListThreads(boardID int64, viewer *forum.Member) ([]forum.Thread
 	return out, rows.Err()
 }
 
+func (s *Store) SearchThreads(viewer *forum.Member, query string) ([]forum.ThreadView, error) {
+	query, err := forum.NormalizeSearch(query)
+	if err != nil {
+		return nil, err
+	}
+	like := "%" + likeEscape(query) + "%"
+	staff := forum.CanHidePost(viewer)
+	q := `
+		SELECT t.id, t.board_id, t.title, t.author_id, t.created_at, t.last_post_at, t.title_edited_at, t.pin_rank,
+		       m.login_name, m.display_name,
+		       COALESCE((SELECT p.hidden FROM posts p WHERE p.thread_id = t.id AND p.floor = 1), 0),
+		       b.name, b.disabled
+		FROM threads t
+		JOIN members m ON m.id = t.author_id
+		JOIN boards b ON b.id = t.board_id
+		WHERE (t.title LIKE ? ESCAPE '\'
+		    OR EXISTS (
+		        SELECT 1 FROM posts p
+		        WHERE p.thread_id = t.id
+		          AND p.body_markdown LIKE ? ESCAPE '\'
+		          AND (? = 1 OR p.hidden = 0)
+		    ))
+		  AND (? = 1 OR b.disabled = 0)
+		ORDER BY t.last_post_at DESC, t.id DESC
+	`
+	staffN := 0
+	if staff {
+		staffN = 1
+	}
+	rows, err := s.db.Query(q, like, like, staffN, staffN)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []forum.ThreadView
+	for rows.Next() {
+		var v forum.ThreadView
+		var created, last string
+		var titleEdited sql.NullString
+		var hidden, disabled int
+		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &titleEdited, &v.PinRank, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden, &v.BoardName, &disabled); err != nil {
+			return nil, err
+		}
+		v.CreatedAt = parseTime(created)
+		v.LastPostAt = parseTime(last)
+		if titleEdited.Valid && titleEdited.String != "" {
+			tm := parseTime(titleEdited.String)
+			v.TitleEditedAt = &tm
+		}
+		v.FirstHidden = hidden != 0
+		v.BoardDisabled = disabled != 0
+		if v.FirstHidden && !staff {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func likeEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 func (s *Store) ThreadByID(id int64) (*forum.Thread, error) {
 	var th forum.Thread
 	var created, last string

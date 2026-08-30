@@ -906,3 +906,106 @@ func TestUpdateDisplayNameAndOwnPassword(t *testing.T) {
 		t.Fatal("password not replaced")
 	}
 }
+
+func TestSearchThreads(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "searchcodeaaa"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("searchcodeaaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := s.CreateBoard("密室", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetBoardDisabled(f, closed.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	titleHit, _, err := s.CreateThread(open.ID, mem.ID, "苹果派", "普通正文")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyHit, _, err := s.CreateThread(open.ID, mem.ID, "别的标题", "这里有香蕉")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hiddenBody, p1, err := s.CreateThread(open.ID, mem.ID, "可见标题", "一楼普通")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := s.CreatePost(hiddenBody.ID, mem.ID, "密语芒果")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetPostHidden(f, secret.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	hiddenThread, hp, err := s.CreateThread(open.ID, mem.ID, "藏起来的苹果", "一楼也有苹果")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetPostHidden(f, hp.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	inClosed, _, err := s.CreateThread(closed.ID, f.ID, "密室苹果", "只有运营者")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = p1
+
+	if _, err := s.SearchThreads(mem, "   "); err != forum.ErrSearchEmpty {
+		t.Fatalf("empty: %v", err)
+	}
+
+	got, err := s.SearchThreads(mem, "苹果")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[int64]bool{}
+	for _, v := range got {
+		ids[v.ID] = true
+	}
+	if !ids[titleHit.ID] {
+		t.Fatal("member missed title hit")
+	}
+	if ids[hiddenThread.ID] {
+		t.Fatal("member saw hidden thread")
+	}
+	if ids[inClosed.ID] {
+		t.Fatal("member saw disabled board")
+	}
+
+	got, err = s.SearchThreads(mem, "香蕉")
+	if err != nil || len(got) != 1 || got[0].ID != bodyHit.ID {
+		t.Fatalf("body hit: %+v err=%v", got, err)
+	}
+	got, err = s.SearchThreads(mem, "芒果")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("member saw hidden floor: %+v err=%v", got, err)
+	}
+
+	got, err = s.SearchThreads(f, "芒果")
+	if err != nil || len(got) != 1 || got[0].ID != hiddenBody.ID {
+		t.Fatalf("staff hidden floor: %+v err=%v", got, err)
+	}
+	got, err = s.SearchThreads(f, "密室苹果")
+	if err != nil || len(got) != 1 || got[0].ID != inClosed.ID || !got[0].BoardDisabled {
+		t.Fatalf("staff disabled board: %+v err=%v", got, err)
+	}
+	got, err = s.SearchThreads(f, "藏起来的苹果")
+	if err != nil || len(got) != 1 || got[0].ID != hiddenThread.ID {
+		t.Fatalf("staff hidden thread: %+v err=%v", got, err)
+	}
+}

@@ -12,6 +12,7 @@
   {{if .Member}}
   <nav>
     <span class="who"><a href="/me">{{.Member.DisplayName}}</a> <b class="login">{{.Member.LoginName}}</b>{{if .RoleLabel}} <span class="badge">{{.RoleLabel}}</span>{{end}}</span>
+    <form class="search" method="get" action="/search"><input name="q" value="{{.Query}}" placeholder="搜索" aria-label="搜索"></form>
     {{if .CanIssueInvite}}<a href="/invites">邀请码</a>{{end}}
     {{if .CanCreateBoard}}<a href="/members">会员</a>{{end}}
     <form class="inline" method="post" action="/logout"><button type="submit">登出</button></form>

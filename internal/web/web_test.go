@@ -1389,3 +1389,76 @@ func TestMeDisplayAndPassword(t *testing.T) {
 	}
 	res.Body.Close()
 }
+
+func TestSearchVisibility(t *testing.T) {
+	ts, founderC := testServer(t)
+	loginFounder(t, ts, founderC)
+
+	res, err := founderC.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}, "description": {""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	res, err = founderC.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"苹果派"}, "body": {"一楼"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	res, err = founderC.PostForm(ts.URL+"/threads/1/posts", url.Values{"body": {"密语芒果"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	res, err = founderC.PostForm(ts.URL+"/posts/2/hide", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+
+	res, err = founderC.Get(ts.URL + "/search?q=苹果")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readBody(t, res)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "苹果派") {
+		t.Fatalf("founder title search: %d %s", res.StatusCode, body)
+	}
+	res, err = founderC.Get(ts.URL + "/search?q=芒果")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "苹果派") {
+		t.Fatalf("founder hidden floor search: %s", body)
+	}
+
+	registerMember(t, ts, founderC, "wang", "老王")
+	res, err = founderC.Get(ts.URL + "/search?q=苹果")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "苹果派") {
+		t.Fatalf("member title search: %s", body)
+	}
+	res, err = founderC.Get(ts.URL + "/search?q=芒果")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if strings.Contains(body, "苹果派") {
+		t.Fatalf("member saw hidden floor: %s", body)
+	}
+	res, err = founderC.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := readBody(t, res)
+	if !strings.Contains(home, `action="/search"`) {
+		t.Fatalf("search box missing: %s", home)
+	}
+}
