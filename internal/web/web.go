@@ -33,7 +33,7 @@ type Server struct {
 
 func New(st *store.Store) (*Server, error) {
 	s := &Server{store: st, mux: http.NewServeMux(), tpl: map[string]*template.Template{}}
-	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html", "register.html", "invites.html", "post_edit.html", "post_edits.html", "title_edit.html"}
+	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "post_edit.html", "post_edits.html", "title_edit.html"}
 	for _, p := range pages {
 		t, err := template.ParseFS(embedded, "templates/layout.html", "templates/"+p)
 		if err != nil {
@@ -75,6 +75,8 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("POST /threads/{id}/unpin", s.requireMember(s.postUnpin))
 	s.mux.HandleFunc("POST /threads/{id}/pin-up", s.requireMember(s.postPinUp))
 	s.mux.HandleFunc("POST /threads/{id}/pin-down", s.requireMember(s.postPinDown))
+	s.mux.HandleFunc("GET /threads/{id}/move", s.requireMember(s.getThreadMove))
+	s.mux.HandleFunc("POST /threads/{id}/move", s.requireMember(s.postThreadMove))
 	return s, nil
 }
 
@@ -104,6 +106,7 @@ type page struct {
 	CanEditTitle   bool
 	TitleEdited    string
 	CanPin         bool
+	CanMoveThread  bool
 }
 
 type postVM struct {
@@ -157,6 +160,7 @@ func (s *Server) render(w http.ResponseWriter, name string, p page) {
 		p.CanViewEdits = forum.CanViewEdits(p.Member)
 		p.CanHide = forum.CanHidePost(p.Member)
 		p.CanPin = forum.CanPin(p.Member)
+		p.CanMoveThread = forum.CanMoveThread(p.Member)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout.html", p); err != nil {
@@ -563,6 +567,8 @@ func publicErr(err error) string {
 		return "不能置顶"
 	case forum.ErrCannotManageBoard:
 		return "只有创始人或运营者能停用版块"
+	case forum.ErrCannotMoveThread:
+		return "只有创始人或运营者能挪主题"
 	default:
 		return err.Error()
 	}
@@ -795,4 +801,73 @@ func (s *Server) pinAction(w http.ResponseWriter, r *http.Request, m *forum.Memb
 		return
 	}
 	http.Redirect(w, r, "/boards/"+strconv.FormatInt(th.BoardID, 10), http.StatusSeeOther)
+}
+
+func (s *Server) getThreadMove(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	if !forum.CanMoveThread(m) {
+		http.Error(w, "只有创始人或运营者能挪主题", http.StatusForbidden)
+		return
+	}
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	th, err := s.store.ThreadByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	boards, err := s.store.ListBoards()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.render(w, "thread_move.html", page{Member: m, Thread: th, Boards: boards})
+}
+
+func (s *Server) postThreadMove(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	if !forum.CanMoveThread(m) {
+		http.Error(w, "只有创始人或运营者能挪主题", http.StatusForbidden)
+		return
+	}
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	th, err := s.store.ThreadByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form", http.StatusBadRequest)
+		return
+	}
+	boardID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("board_id")), 10, 64)
+	if err != nil || boardID <= 0 {
+		boards, berr := s.store.ListBoards()
+		if berr != nil {
+			http.Error(w, berr.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.render(w, "thread_move.html", page{Member: m, Thread: th, Boards: boards, Error: "要选一个版块"})
+		return
+	}
+	moved, err := s.store.MoveThread(m, th.ID, boardID)
+	if err == forum.ErrNotFound {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		boards, berr := s.store.ListBoards()
+		if berr != nil {
+			http.Error(w, berr.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.render(w, "thread_move.html", page{Member: m, Thread: th, Boards: boards, Error: publicErr(err)})
+		return
+	}
+	http.Redirect(w, r, "/boards/"+strconv.FormatInt(moved.BoardID, 10), http.StatusSeeOther)
 }

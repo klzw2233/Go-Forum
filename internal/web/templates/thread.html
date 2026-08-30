@@ -7,6 +7,7 @@
 <h1>{{.Thread.Title}}</h1>
 {{if .TitleEdited}}<p class="muted">{{.TitleEdited}}</p>{{end}}
 {{if .CanEditTitle}}<p><a href="/threads/{{.Thread.ID}}/title">改标题</a></p>{{end}}
+{{if .CanMoveThread}}<p><a href="/threads/{{.Thread.ID}}/move">挪版</a></p>{{end}}
 {{range .Posts}}
 <article class="post" id="floor-{{.Floor}}">
   <header>

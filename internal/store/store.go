@@ -271,6 +271,29 @@ func (s *Store) SetBoardDisabled(actor *forum.Member, id int64, disabled bool) (
 	return s.BoardByID(id)
 }
 
+// MoveThread moves a thread to another board. Floor numbers, title, pin rank
+// and timestamps are untouched.
+func (s *Store) MoveThread(actor *forum.Member, threadID, boardID int64) (*forum.Thread, error) {
+	if !forum.CanMoveThread(actor) {
+		return nil, forum.ErrCannotMoveThread
+	}
+	th, err := s.ThreadByID(threadID)
+	if err != nil {
+		return nil, err
+	}
+	b, err := s.BoardByID(boardID)
+	if err != nil {
+		return nil, err
+	}
+	if th.BoardID == b.ID {
+		return th, nil
+	}
+	if _, err := s.db.Exec(`UPDATE threads SET board_id = ? WHERE id = ?`, b.ID, th.ID); err != nil {
+		return nil, err
+	}
+	return s.ThreadByID(threadID)
+}
+
 func (s *Store) ListBoards() ([]forum.Board, error) {
 	rows, err := s.db.Query(`SELECT id, name, description, sort, disabled, created_at FROM boards ORDER BY sort ASC, id ASC`)
 	if err != nil {

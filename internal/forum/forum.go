@@ -53,6 +53,7 @@ var (
 	ErrCannotEditTitle   = errors.New("cannot edit this title")
 	ErrCannotPin         = errors.New("cannot pin threads")
 	ErrCannotManageBoard = errors.New("cannot manage boards")
+	ErrCannotMoveThread  = errors.New("cannot move threads")
 )
 
 type Member struct {
@@ -261,6 +262,10 @@ func CanEditTitle(m *Member, th *Thread, firstFloorHidden bool) bool {
 }
 
 func CanPin(m *Member) bool {
+	return CanHidePost(m)
+}
+
+func CanMoveThread(m *Member) bool {
 	return CanHidePost(m)
 }
 

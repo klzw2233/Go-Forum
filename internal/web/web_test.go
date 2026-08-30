@@ -700,6 +700,86 @@ func TestPinHTTP(t *testing.T) {
 	res.Body.Close()
 }
 
+func TestMoveThreadHTTP(t *testing.T) {
+	ts, client := testServer(t)
+	loginFounder(t, ts, client)
+	res, err := client.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+	res, err = client.PostForm(ts.URL+"/boards/new", url.Values{"name": {"技术"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+	res, err = client.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"挪我"}, "body": {"一楼"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body := readBody(t, res)
+	if !strings.Contains(body, "/threads/1/move") {
+		t.Fatalf("move link missing: %s", body)
+	}
+
+	res, err = client.Get(ts.URL + "/threads/1/move")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "技术") {
+		t.Fatalf("move page: %d %s", res.StatusCode, body)
+	}
+
+	res, err = client.PostForm(ts.URL+"/threads/1/move", url.Values{"board_id": {"2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body = readBody(t, res)
+	if !strings.Contains(body, "技术") {
+		t.Fatalf("should land on new board: %s", body)
+	}
+
+	res, err = client.Get(ts.URL + "/boards/2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "挪我") {
+		t.Fatalf("thread missing in new board: %s", body)
+	}
+	res, err = client.Get(ts.URL + "/boards/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if strings.Contains(body, "挪我") {
+		t.Fatalf("thread still in old board: %s", body)
+	}
+
+	registerMember(t, ts, client, "wang", "老王")
+	res, err = client.Get(ts.URL + "/threads/1/move")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member move page %d", res.StatusCode)
+	}
+	res.Body.Close()
+	res, err = client.PostForm(ts.URL+"/threads/1/move", url.Values{"board_id": {"1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member move post %d", res.StatusCode)
+	}
+	res.Body.Close()
+}
+
 func registerMember(t *testing.T, ts *httptest.Server, client *http.Client, login, display string) {
 	t.Helper()
 	res, err := client.PostForm(ts.URL+"/invites", nil)
