@@ -1,0 +1,11 @@
+{{define "title"}}改版块{{end}}
+{{define "content"}}
+<h1>改版块</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form method="post" action="/boards/{{.Board.ID}}/edit">
+  <label>名称 <input name="name" value="{{.Board.Name}}" required></label>
+  <label>说明 <input name="description" value="{{.Board.Description}}"></label>
+  <button type="submit">保存</button>
+</form>
+<p><a href="/boards/{{.Board.ID}}">返回版块</a></p>
+{{end}}

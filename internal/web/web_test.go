@@ -1173,3 +1173,97 @@ func TestPromoteAndSetPassword(t *testing.T) {
 		t.Fatalf("after demote: %s", body)
 	}
 }
+
+func TestEditAndReorderBoards(t *testing.T) {
+	ts, founderC := testServer(t)
+	loginFounder(t, ts, founderC)
+
+	res, err := founderC.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}, "description": {"闲聊"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	res, err = founderC.PostForm(ts.URL+"/boards/new", url.Values{"name": {"技术"}, "description": {""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+
+	res, err = founderC.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := readBody(t, res)
+	if !strings.Contains(home, "/boards/1/up") || !strings.Contains(home, "/boards/2/down") {
+		t.Fatalf("reorder buttons missing: %s", home)
+	}
+	i1 := strings.Index(home, "灌水")
+	i2 := strings.Index(home, "技术")
+	if i1 < 0 || i2 < 0 || i1 > i2 {
+		t.Fatalf("initial order: %s", home)
+	}
+
+	res, err = founderC.Get(ts.URL + "/boards/1/edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readBody(t, res)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, `value="灌水"`) {
+		t.Fatalf("edit form: %d %s", res.StatusCode, body)
+	}
+	res, err = founderC.PostForm(ts.URL+"/boards/1/edit", url.Values{"name": {"水区"}, "description": {"随便聊"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	body = readBody(t, res)
+	if !strings.Contains(body, "水区") || !strings.Contains(body, "随便聊") {
+		t.Fatalf("after rename: %s", body)
+	}
+
+	res, err = founderC.PostForm(ts.URL+"/boards/1/down", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	home = readBody(t, res)
+	i1 = strings.Index(home, "水区")
+	i2 = strings.Index(home, "技术")
+	if i1 < 0 || i2 < 0 || i2 > i1 {
+		t.Fatalf("after down: %s", home)
+	}
+
+	registerMember(t, ts, founderC, "wang", "老王")
+	res, err = founderC.Get(ts.URL + "/boards/1/edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member edit GET = %d", res.StatusCode)
+	}
+	res.Body.Close()
+	res, err = founderC.PostForm(ts.URL+"/boards/1/up", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member up = %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = founderC.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home = readBody(t, res)
+	if strings.Contains(home, "/boards/1/up") {
+		t.Fatalf("member saw reorder buttons: %s", home)
+	}
+	i1 = strings.Index(home, "水区")
+	i2 = strings.Index(home, "技术")
+	if i1 < 0 || i2 < 0 || i2 > i1 {
+		t.Fatalf("member order: %s", home)
+	}
+}

@@ -783,3 +783,70 @@ func TestSetMemberRoleAndPassword(t *testing.T) {
 		t.Fatalf("demote: %+v err=%v", back, err)
 	}
 }
+
+func TestUpdateAndMoveBoard(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "editboardcode"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("editboardcode", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.CreateBoard("灌水", "闲聊")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBoard("技术", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateBoard(mem, a.ID, "新名", "新说明"); err != forum.ErrCannotManageBoard {
+		t.Fatalf("member update: %v", err)
+	}
+	if _, err := s.MoveBoard(mem, a.ID, 1); err != forum.ErrCannotManageBoard {
+		t.Fatalf("member move: %v", err)
+	}
+	if _, err := s.UpdateBoard(f, a.ID, "   ", ""); err != forum.ErrBoardNameEmpty {
+		t.Fatalf("empty name: %v", err)
+	}
+	got, err := s.UpdateBoard(f, a.ID, " 水区 ", " 随便聊 ")
+	if err != nil || got.Name != "水区" || got.Description != "随便聊" {
+		t.Fatalf("update: %+v err=%v", got, err)
+	}
+
+	list, err := s.ListBoards()
+	if err != nil || len(list) != 2 || list[0].ID != a.ID || list[1].ID != b.ID {
+		t.Fatalf("initial order: %+v err=%v", list, err)
+	}
+	moved, err := s.MoveBoard(f, a.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = moved
+	list, err = s.ListBoards()
+	if err != nil || list[0].ID != b.ID || list[1].ID != a.ID {
+		t.Fatalf("after down: %+v", list)
+	}
+	same, err := s.MoveBoard(f, a.ID, 1)
+	if err != nil || same.ID != a.ID {
+		t.Fatalf("end noop: %+v err=%v", same, err)
+	}
+	list, err = s.ListBoards()
+	if err != nil || list[0].ID != b.ID || list[1].ID != a.ID {
+		t.Fatalf("still at end: %+v", list)
+	}
+	up, err := s.MoveBoard(f, a.ID, -1)
+	if err != nil || up.ID != a.ID {
+		t.Fatal(err)
+	}
+	list, err = s.ListBoards()
+	if err != nil || list[0].ID != a.ID || list[1].ID != b.ID {
+		t.Fatalf("after up: %+v", list)
+	}
+}
