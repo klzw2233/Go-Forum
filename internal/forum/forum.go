@@ -55,6 +55,8 @@ var (
 	ErrCannotManageBoard = errors.New("cannot manage boards")
 	ErrCannotMoveThread  = errors.New("cannot move threads")
 	ErrCannotSuspend     = errors.New("cannot suspend this member")
+	ErrCannotSetRole     = errors.New("cannot change this role")
+	ErrCannotSetPassword = errors.New("cannot set this password")
 )
 
 type Member struct {
@@ -285,6 +287,19 @@ func CanSuspend(actor, target *Member) bool {
 		return true
 	}
 	return actor.Role == RoleOperator && target.Role == RoleMember
+}
+
+func CanSetPassword(actor, target *Member) bool {
+	return CanSuspend(actor, target)
+}
+
+// CanSetRole reports whether actor may promote or demote target.
+// Only the founder may change roles, and never their own or another founder's.
+func CanSetRole(actor, target *Member) bool {
+	if actor == nil || target == nil || actor.ID == target.ID {
+		return false
+	}
+	return actor.Role == RoleFounder && target.Role != RoleFounder
 }
 
 func (t Thread) Pinned() bool {

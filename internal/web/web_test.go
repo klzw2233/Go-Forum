@@ -1042,3 +1042,134 @@ func TestSuspendMember(t *testing.T) {
 	}
 	res.Body.Close()
 }
+
+func TestPromoteAndSetPassword(t *testing.T) {
+	ts, founderC := testServer(t)
+	loginFounder(t, ts, founderC)
+
+	res, err := founderC.PostForm(ts.URL+"/invites", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	body := readBody(t, res)
+	m := regexp.MustCompile(`刚发出：<code class="invite">([^<]+)</code>`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("invite missing: %s", body)
+	}
+
+	wangC := newClient()
+	res, err = wangC.PostForm(ts.URL+"/register", url.Values{
+		"code": {m[1]}, "login_name": {"wang"}, "display_name": {"老王"}, "password": {"hunter2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, wangC, res)
+	_ = readBody(t, res)
+
+	res, err = wangC.PostForm(ts.URL+"/members/2/promote", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member promote = %d", res.StatusCode)
+	}
+	res.Body.Close()
+	res, err = wangC.Get(ts.URL + "/members/1/password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member set founder password GET = %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = founderC.PostForm(ts.URL+"/members/1/promote", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("promote founder = %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = founderC.PostForm(ts.URL+"/members/2/promote", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	body = readBody(t, res)
+	if !strings.Contains(body, "运营者") || !strings.Contains(body, "/members/2/demote") {
+		t.Fatalf("after promote: %s", body)
+	}
+
+	res, err = wangC.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := readBody(t, res)
+	if !strings.Contains(home, "运营者") {
+		t.Fatalf("promoted session badge: %s", home)
+	}
+
+	res, err = wangC.Get(ts.URL + "/members/1/password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("operator set founder password = %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = founderC.Get(ts.URL + "/members/2/password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "wang") {
+		t.Fatalf("password form: %d %s", res.StatusCode, body)
+	}
+	res, err = founderC.PostForm(ts.URL+"/members/2/password", url.Values{"password": {"newpass"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+
+	res, err = wangC.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/login" {
+		t.Fatalf("session after set password: %d loc=%s", res.StatusCode, res.Header.Get("Location"))
+	}
+	res.Body.Close()
+	res, err = wangC.PostForm(ts.URL+"/login", url.Values{"login_name": {"wang"}, "password": {"hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "登录名或密码不对") {
+		t.Fatalf("old password still works: %s", body)
+	}
+	res, err = wangC.PostForm(ts.URL+"/login", url.Values{"login_name": {"wang"}, "password": {"newpass"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, wangC, res)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("new password login: %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = founderC.PostForm(ts.URL+"/members/2/demote", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	body = readBody(t, res)
+	if !strings.Contains(body, "/members/2/promote") {
+		t.Fatalf("after demote: %s", body)
+	}
+}
