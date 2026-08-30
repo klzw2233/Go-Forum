@@ -52,6 +52,7 @@ var (
 	ErrCannotReply       = errors.New("cannot reply to this thread")
 	ErrCannotEditTitle   = errors.New("cannot edit this title")
 	ErrCannotPin         = errors.New("cannot pin threads")
+	ErrCannotManageBoard = errors.New("cannot manage boards")
 )
 
 type Member struct {
@@ -67,6 +68,7 @@ type Board struct {
 	Name        string
 	Description string
 	Sort        int
+	Disabled    bool
 	CreatedAt   time.Time
 }
 
@@ -212,6 +214,15 @@ func NextFloor(last int) int {
 
 func CanCreateBoard(m *Member) bool {
 	return m != nil && (m.Role == RoleFounder || m.Role == RoleOperator)
+}
+
+// CanSeeBoard reports whether m may see a board and its contents. A disabled
+// board is closed to members; operators still see it and can re-enable it.
+func CanSeeBoard(m *Member, b *Board) bool {
+	if b == nil {
+		return false
+	}
+	return !b.Disabled || CanCreateBoard(m)
 }
 
 func CanIssueInvite(m *Member) bool {
