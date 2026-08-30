@@ -33,7 +33,7 @@ type Server struct {
 
 func New(st *store.Store) (*Server, error) {
 	s := &Server{store: st, mux: http.NewServeMux(), tpl: map[string]*template.Template{}}
-	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "post_edit.html", "post_edits.html", "title_edit.html"}
+	pages := []string{"login.html", "home.html", "board_new.html", "board_edit.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "post_edit.html", "post_edits.html", "title_edit.html"}
 	for _, p := range pages {
 		t, err := template.ParseFS(embedded, "templates/layout.html", "templates/"+p)
 		if err != nil {
@@ -67,6 +67,10 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("GET /boards/{id}", s.requireMember(s.getBoard))
 	s.mux.HandleFunc("POST /boards/{id}/disable", s.requireMember(s.postDisableBoard))
 	s.mux.HandleFunc("POST /boards/{id}/enable", s.requireMember(s.postEnableBoard))
+	s.mux.HandleFunc("GET /boards/{id}/edit", s.requireMember(s.getBoardEdit))
+	s.mux.HandleFunc("POST /boards/{id}/edit", s.requireMember(s.postBoardEdit))
+	s.mux.HandleFunc("POST /boards/{id}/up", s.requireMember(s.postBoardUp))
+	s.mux.HandleFunc("POST /boards/{id}/down", s.requireMember(s.postBoardDown))
 	s.mux.HandleFunc("GET /boards/{id}/threads/new", s.requireMember(s.getThreadNew))
 	s.mux.HandleFunc("POST /boards/{id}/threads/new", s.requireMember(s.postThreadNew))
 	s.mux.HandleFunc("GET /threads/{id}", s.requireMember(s.getThread))
@@ -541,6 +545,72 @@ func (s *Server) setBoardDisabled(w http.ResponseWriter, r *http.Request, m *for
 	}
 }
 
+func (s *Server) getBoardEdit(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.boardEdit(w, r, m, false)
+}
+
+func (s *Server) postBoardEdit(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.boardEdit(w, r, m, true)
+}
+
+func (s *Server) boardEdit(w http.ResponseWriter, r *http.Request, m *forum.Member, save bool) {
+	if !forum.CanCreateBoard(m) {
+		http.Error(w, "只有创始人或运营者能改版块", http.StatusForbidden)
+		return
+	}
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	b, err := s.store.BoardByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !save {
+		s.render(w, "board_edit.html", page{Member: m, Board: b})
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.render(w, "board_edit.html", page{Member: m, Board: b, Error: "表单无效"})
+		return
+	}
+	updated, err := s.store.UpdateBoard(m, b.ID, r.FormValue("name"), r.FormValue("description"))
+	if err != nil {
+		s.render(w, "board_edit.html", page{Member: m, Board: b, Error: publicErr(err)})
+		return
+	}
+	http.Redirect(w, r, "/boards/"+strconv.FormatInt(updated.ID, 10), http.StatusSeeOther)
+}
+
+func (s *Server) postBoardUp(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.moveBoard(w, r, m, -1)
+}
+
+func (s *Server) postBoardDown(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.moveBoard(w, r, m, 1)
+}
+
+func (s *Server) moveBoard(w http.ResponseWriter, r *http.Request, m *forum.Member, delta int) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	_, err := s.store.MoveBoard(m, id, delta)
+	switch err {
+	case nil:
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	case forum.ErrCannotManageBoard:
+		http.Error(w, "只有创始人或运营者能排版块", http.StatusForbidden)
+	case forum.ErrNotFound:
+		http.NotFound(w, r)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 func (s *Server) getBoard(w http.ResponseWriter, r *http.Request, m *forum.Member) {
 	id, ok := pathID(r, "id")
 	if !ok {
@@ -727,6 +797,12 @@ func publicErr(err error) string {
 		return "不能改这个身份"
 	case forum.ErrCannotSetPassword:
 		return "不能给这个会员设密码"
+	case forum.ErrBoardNameEmpty:
+		return "版块名不能为空"
+	case forum.ErrBoardNameLong:
+		return "版块名太长"
+	case forum.ErrBoardDescLong:
+		return "版块说明太长"
 	default:
 		return err.Error()
 	}

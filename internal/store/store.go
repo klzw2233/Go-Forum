@@ -374,6 +374,65 @@ func (s *Store) SetBoardDisabled(actor *forum.Member, id int64, disabled bool) (
 	return s.BoardByID(id)
 }
 
+func (s *Store) UpdateBoard(actor *forum.Member, id int64, name, description string) (*forum.Board, error) {
+	if !forum.CanCreateBoard(actor) {
+		return nil, forum.ErrCannotManageBoard
+	}
+	if _, err := s.BoardByID(id); err != nil {
+		return nil, err
+	}
+	name, err := forum.NormalizeBoardName(name)
+	if err != nil {
+		return nil, err
+	}
+	description, err = forum.NormalizeBoardDesc(description)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.db.Exec(`UPDATE boards SET name = ?, description = ? WHERE id = ?`, name, description, id); err != nil {
+		return nil, err
+	}
+	return s.BoardByID(id)
+}
+
+func (s *Store) MoveBoard(actor *forum.Member, id int64, delta int) (*forum.Board, error) {
+	if !forum.CanCreateBoard(actor) {
+		return nil, forum.ErrCannotManageBoard
+	}
+	if delta != -1 && delta != 1 {
+		return s.BoardByID(id)
+	}
+	b, err := s.BoardByID(id)
+	if err != nil {
+		return nil, err
+	}
+	var otherID int64
+	var otherSort int
+	q := `SELECT id, sort FROM boards WHERE sort < ? ORDER BY sort DESC LIMIT 1`
+	if delta > 0 {
+		q = `SELECT id, sort FROM boards WHERE sort > ? ORDER BY sort ASC LIMIT 1`
+	}
+	err = s.db.QueryRow(q, b.Sort).Scan(&otherID, &otherSort)
+	if err != nil {
+		return b, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE boards SET sort = ? WHERE id = ?`, otherSort, b.ID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`UPDATE boards SET sort = ? WHERE id = ?`, b.Sort, otherID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.BoardByID(id)
+}
+
 // MoveThread moves a thread to another board. Floor numbers, title, pin rank
 // and timestamps are untouched.
 func (s *Store) MoveThread(actor *forum.Member, threadID, boardID int64) (*forum.Thread, error) {

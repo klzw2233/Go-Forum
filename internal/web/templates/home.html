@@ -9,6 +9,10 @@
     <a href="/boards/{{.ID}}">{{.Name}}</a>
     {{if .Disabled}}<span class="badge">已停用</span>{{end}}
     {{if .Description}}<span class="muted">{{.Description}}</span>{{end}}
+    {{if $.CanCreateBoard}}
+    <form class="inline" method="post" action="/boards/{{.ID}}/up"><button type="submit">上移</button></form>
+    <form class="inline" method="post" action="/boards/{{.ID}}/down"><button type="submit">下移</button></form>
+    {{end}}
   </li>
 {{end}}
 </ul>

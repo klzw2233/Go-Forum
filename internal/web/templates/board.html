@@ -9,6 +9,7 @@
   {{else}}
   <form class="inline" method="post" action="/boards/{{.Board.ID}}/disable"><button type="submit">停用</button></form>
   {{end}}
+  <p><a href="/boards/{{.Board.ID}}/edit">改名</a></p>
 {{end}}
 <p><a href="/boards/{{.Board.ID}}/threads/new">发主题</a></p>
 {{if not .Threads}}<p class="muted">还没有主题。</p>{{end}}
