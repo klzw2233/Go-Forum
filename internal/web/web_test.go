@@ -1267,3 +1267,125 @@ func TestEditAndReorderBoards(t *testing.T) {
 		t.Fatalf("member order: %s", home)
 	}
 }
+
+func TestMeDisplayAndPassword(t *testing.T) {
+	ts, founderC := testServer(t)
+	loginFounder(t, ts, founderC)
+
+	res, err := founderC.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}, "description": {""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	registerMember(t, ts, founderC, "wang", "老王")
+	res, err = founderC.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"帖"}, "body": {"正文"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+
+	res, err = founderC.Get(ts.URL + "/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readBody(t, res)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, `value="老王"`) || !strings.Contains(body, "wang") {
+		t.Fatalf("me page: %d %s", res.StatusCode, body)
+	}
+	res, err = founderC.PostForm(ts.URL+"/me/display", url.Values{"display_name": {""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "显示名不能为空") {
+		t.Fatalf("empty display: %s", body)
+	}
+	res, err = founderC.PostForm(ts.URL+"/me/display", url.Values{"display_name": {"大王"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	body = readBody(t, res)
+	if !strings.Contains(body, `value="大王"`) {
+		t.Fatalf("after display: %s", body)
+	}
+	res, err = founderC.Get(ts.URL + "/threads/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "大王") || !strings.Contains(body, `<b class="login">wang</b>`) {
+		t.Fatalf("old post names: %s", body)
+	}
+	res, err = founderC.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := readBody(t, res)
+	if !strings.Contains(home, `href="/me"`) || !strings.Contains(home, "大王") {
+		t.Fatalf("nav: %s", home)
+	}
+
+	other := newClient()
+	res, err = other.PostForm(ts.URL+"/login", url.Values{"login_name": {"wang"}, "password": {"hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, other, res)
+	_ = readBody(t, res)
+
+	res, err = founderC.PostForm(ts.URL+"/me/password", url.Values{"old_password": {"wrong"}, "password": {"newpass"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "旧密码不对") {
+		t.Fatalf("bad old password: %s", body)
+	}
+	res, err = founderC.PostForm(ts.URL+"/me/password", url.Values{"old_password": {"hunter2"}, "password": {"newpass"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("after password change: %d", res.StatusCode)
+	}
+	_ = readBody(t, res)
+
+	res, err = founderC.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("current session after password: %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = other.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/login" {
+		t.Fatalf("other session: %d loc=%s", res.StatusCode, res.Header.Get("Location"))
+	}
+	res.Body.Close()
+	res, err = other.PostForm(ts.URL+"/login", url.Values{"login_name": {"wang"}, "password": {"hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "登录名或密码不对") {
+		t.Fatalf("old password still works: %s", body)
+	}
+	res, err = other.PostForm(ts.URL+"/login", url.Values{"login_name": {"wang"}, "password": {"newpass"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, other, res)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("new password login: %d", res.StatusCode)
+	}
+	res.Body.Close()
+}

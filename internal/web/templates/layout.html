@@ -11,7 +11,7 @@
   <a class="brand" href="/">论坛</a>
   {{if .Member}}
   <nav>
-    <span class="who">{{.Member.DisplayName}} <b class="login">{{.Member.LoginName}}</b>{{if .RoleLabel}} <span class="badge">{{.RoleLabel}}</span>{{end}}</span>
+    <span class="who"><a href="/me">{{.Member.DisplayName}}</a> <b class="login">{{.Member.LoginName}}</b>{{if .RoleLabel}} <span class="badge">{{.RoleLabel}}</span>{{end}}</span>
     {{if .CanIssueInvite}}<a href="/invites">邀请码</a>{{end}}
     {{if .CanCreateBoard}}<a href="/members">会员</a>{{end}}
     <form class="inline" method="post" action="/logout"><button type="submit">登出</button></form>
