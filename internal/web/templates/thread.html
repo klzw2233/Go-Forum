@@ -19,7 +19,7 @@
 <article class="post" id="floor-{{.Floor}}">
   <header>
     <span class="floor">#{{.Floor}}</span>
-    <span class="who">{{.AuthorDisplayName}} <b class="login">{{.AuthorLoginName}}</b>{{if .RoleLabel}} <span class="badge">{{.RoleLabel}}</span>{{end}}</span>
+    <span class="who">{{.AuthorDisplayName}} <a href="/u/{{.AuthorLoginName}}"><b class="login">{{.AuthorLoginName}}</b></a>{{if .RoleLabel}} <span class="badge">{{.RoleLabel}}</span>{{end}}</span>
     {{if not .ShowBody}}<span class="muted">已隐藏</span>{{end}}
     {{if .EditedLabel}}<span class="muted">{{.EditedLabel}}</span>{{end}}
     {{if .CanEdit}}<a href="/posts/{{.ID}}/edit">编辑</a>{{end}}

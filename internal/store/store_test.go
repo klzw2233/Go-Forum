@@ -1205,3 +1205,72 @@ func TestNotifications(t *testing.T) {
 		}
 	}
 }
+
+func TestListThreadsByAuthor(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "profcodeaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("profcodeaaaaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := s.CreateBoard("密室", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetBoardDisabled(f, closed.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	visible, _, err := s.CreateThread(open.ID, mem.ID, "可见", "一楼")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hidden, hp, err := s.CreateThread(open.ID, mem.ID, "隐藏主题", "一楼藏")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetPostHidden(f, hp.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	inClosed, _, err := s.CreateThread(closed.ID, mem.ID, "密室帖", "密")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ListThreadsByAuthor(mem, mem.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[int64]bool{}
+	for _, v := range got {
+		ids[v.ID] = true
+	}
+	if !ids[visible.ID] {
+		t.Fatal("missing visible")
+	}
+	if ids[hidden.ID] || ids[inClosed.ID] {
+		t.Fatalf("member saw hidden or disabled: %+v", got)
+	}
+
+	staff, err := s.ListThreadsByAuthor(f, mem.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids = map[int64]bool{}
+	for _, v := range staff {
+		ids[v.ID] = true
+	}
+	if !ids[visible.ID] || !ids[hidden.ID] || !ids[inClosed.ID] {
+		t.Fatalf("staff missing: %+v", staff)
+	}
+}

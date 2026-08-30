@@ -1659,3 +1659,49 @@ func TestMentionNotifyHTTP(t *testing.T) {
 	}
 	res.Body.Close()
 }
+
+func TestProfilePage(t *testing.T) {
+	ts, founderC := testServer(t)
+	loginFounder(t, ts, founderC)
+	res, err := founderC.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}, "description": {""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	registerMember(t, ts, founderC, "wang", "老王")
+	res, err = founderC.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"可见主题"}, "body": {"一楼"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("thread %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = founderC.Get(ts.URL + "/u/wang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readBody(t, res)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "可见主题") || !strings.Contains(body, "wang") {
+		t.Fatalf("profile: %d %s", res.StatusCode, body)
+	}
+	res, err = founderC.Get(ts.URL + "/u/nosuch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = founderC.Get(ts.URL + "/threads/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, `href="/u/wang"`) {
+		t.Fatalf("floor link: %s", body)
+	}
+}

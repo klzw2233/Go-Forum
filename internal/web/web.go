@@ -33,7 +33,7 @@ type Server struct {
 
 func New(st *store.Store) (*Server, error) {
 	s := &Server{store: st, mux: http.NewServeMux(), tpl: map[string]*template.Template{}}
-	pages := []string{"login.html", "home.html", "board_new.html", "board_edit.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "me.html", "search.html", "notifications.html", "post_edit.html", "post_edits.html", "title_edit.html"}
+	pages := []string{"login.html", "home.html", "board_new.html", "board_edit.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "me.html", "search.html", "notifications.html", "profile.html", "post_edit.html", "post_edits.html", "title_edit.html"}
 	for _, p := range pages {
 		t, err := template.ParseFS(embedded, "templates/layout.html", "templates/"+p)
 		if err != nil {
@@ -52,6 +52,7 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("POST /register", s.postRegister)
 	s.mux.HandleFunc("POST /logout", s.requireMember(s.postLogout))
 	s.mux.HandleFunc("GET /me", s.requireMember(s.getMe))
+	s.mux.HandleFunc("GET /u/{login}", s.requireMember(s.getProfile))
 	s.mux.HandleFunc("POST /me/display", s.requireMember(s.postMeDisplay))
 	s.mux.HandleFunc("POST /me/password", s.requireMember(s.postMePassword))
 	s.mux.HandleFunc("GET /{$}", s.requireMember(s.getHome))
@@ -134,6 +135,8 @@ type page struct {
 	Query          string
 	Notifications  []forum.Notification
 	UnreadNotices  int
+	Profile        *forum.Member
+	ProfileRole    string
 }
 
 type memberVM struct {
@@ -301,6 +304,25 @@ func (s *Server) postLogout(w http.ResponseWriter, r *http.Request, _ *forum.Mem
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+func (s *Server) getProfile(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	login := r.PathValue("login")
+	if !forum.ValidLoginName(login) {
+		http.NotFound(w, r)
+		return
+	}
+	target, _, err := s.store.MemberByLogin(login)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	threads, err := s.store.ListThreadsByAuthor(m, target.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.render(w, "profile.html", page{Member: m, Profile: target, ProfileRole: forum.RoleLabel(target.Role), Threads: threads})
 }
 
 func (s *Server) getMe(w http.ResponseWriter, r *http.Request, m *forum.Member) {

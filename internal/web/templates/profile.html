@@ -1,0 +1,18 @@
+{{define "title"}}{{.Profile.DisplayName}}{{end}}
+{{define "content"}}
+<h1>{{.Profile.DisplayName}} <b class="login">{{.Profile.LoginName}}</b>{{if .ProfileRole}} <span class="badge">{{.ProfileRole}}</span>{{end}}{{if .Profile.Suspended}} <span class="badge">已停用</span>{{end}}</h1>
+{{if eq .Member.ID .Profile.ID}}<p><a href="/me">改显示名和密码</a></p>{{end}}
+<h2>开过的主题</h2>
+{{if not .Threads}}<p class="muted">没有可见的主题。</p>{{end}}
+<ul class="threads">
+{{range .Threads}}
+  <li>
+    <span class="muted">{{.BoardName}}</span>
+    {{if .BoardDisabled}}<span class="badge">已停用</span>{{end}}
+    {{if .Unread}}<span class="badge">未读</span>{{end}}
+    {{if .Locked}}<span class="badge">已锁定</span>{{end}}
+    <a href="/threads/{{.ID}}">{{.Title}}</a>
+  </li>
+{{end}}
+</ul>
+{{end}}
