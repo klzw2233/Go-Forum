@@ -616,3 +616,86 @@ func TestEditTitleHTTP(t *testing.T) {
 	}
 	res.Body.Close()
 }
+
+func TestPinHTTP(t *testing.T) {
+	ts, client := testServer(t)
+	loginFounder(t, ts, client)
+	res, err := client.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+	res, err = client.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"A"}, "body": {"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+	res, err = client.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"B"}, "body": {"b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+
+	res, err = client.PostForm(ts.URL+"/threads/2/pin", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body := readBody(t, res)
+	if !strings.Contains(body, "置顶") {
+		t.Fatalf("pin badge missing: %s", body)
+	}
+	bPos := strings.Index(body, ">B<")
+	aPos := strings.Index(body, ">A<")
+	if bPos < 0 || aPos < 0 || bPos > aPos {
+		t.Fatalf("B should be above A: %s", body)
+	}
+
+	res, err = client.PostForm(ts.URL+"/invites", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	body = readBody(t, res)
+	re := regexp.MustCompile(`刚发出：<code class="invite">([^<]+)</code>`)
+	m := re.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("code: %s", body)
+	}
+	code := m[1]
+	res, err = client.PostForm(ts.URL+"/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	res, err = client.PostForm(ts.URL+"/register", url.Values{
+		"code": {code}, "login_name": {"wang"}, "display_name": {"老王"}, "password": {"hunter2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, client, res)
+	_ = readBody(t, res)
+	res, err = client.Get(ts.URL + "/boards/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if strings.Contains(body, "action=\"/threads/2/pin\"") || strings.Contains(body, ">置顶</button>") && strings.Contains(body, "pin-up") {
+		// member should not see pin controls; badge 置顶 is ok
+	}
+	if strings.Contains(body, "pin-up") {
+		t.Fatalf("member saw pin controls: %s", body)
+	}
+	res, err = client.PostForm(ts.URL+"/threads/1/pin", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member pin %d", res.StatusCode)
+	}
+	res.Body.Close()
+}

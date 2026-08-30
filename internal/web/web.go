@@ -69,6 +69,10 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("GET /posts/{id}/edits", s.requireMember(s.getPostEdits))
 	s.mux.HandleFunc("POST /posts/{id}/hide", s.requireMember(s.postHide))
 	s.mux.HandleFunc("POST /posts/{id}/unhide", s.requireMember(s.postUnhide))
+	s.mux.HandleFunc("POST /threads/{id}/pin", s.requireMember(s.postPin))
+	s.mux.HandleFunc("POST /threads/{id}/unpin", s.requireMember(s.postUnpin))
+	s.mux.HandleFunc("POST /threads/{id}/pin-up", s.requireMember(s.postPinUp))
+	s.mux.HandleFunc("POST /threads/{id}/pin-down", s.requireMember(s.postPinDown))
 	return s, nil
 }
 
@@ -97,6 +101,7 @@ type page struct {
 	ThreadHidden   bool
 	CanEditTitle   bool
 	TitleEdited    string
+	CanPin         bool
 }
 
 type postVM struct {
@@ -149,6 +154,7 @@ func (s *Server) render(w http.ResponseWriter, name string, p page) {
 		p.CanIssueInvite = forum.CanIssueInvite(p.Member)
 		p.CanViewEdits = forum.CanViewEdits(p.Member)
 		p.CanHide = forum.CanHidePost(p.Member)
+		p.CanPin = forum.CanPin(p.Member)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout.html", p); err != nil {
@@ -511,6 +517,8 @@ func publicErr(err error) string {
 		return "不能隐藏这篇帖"
 	case forum.ErrCannotReply:
 		return "不能回复这篇主题"
+	case forum.ErrCannotPin:
+		return "不能置顶"
 	default:
 		return err.Error()
 	}
@@ -691,4 +699,56 @@ func (s *Server) titleEdit(w http.ResponseWriter, r *http.Request, m *forum.Memb
 		return
 	}
 	http.Redirect(w, r, "/threads/"+strconv.FormatInt(updated.ID, 10), http.StatusSeeOther)
+}
+
+func (s *Server) postPin(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.pinAction(w, r, m, "pin")
+}
+
+func (s *Server) postUnpin(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.pinAction(w, r, m, "unpin")
+}
+
+func (s *Server) postPinUp(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.pinAction(w, r, m, "up")
+}
+
+func (s *Server) postPinDown(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.pinAction(w, r, m, "down")
+}
+
+func (s *Server) pinAction(w http.ResponseWriter, r *http.Request, m *forum.Member, op string) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	var th *forum.Thread
+	var err error
+	switch op {
+	case "pin":
+		th, err = s.store.PinThread(m, id)
+	case "unpin":
+		th, err = s.store.UnpinThread(m, id)
+	case "up":
+		th, err = s.store.MovePinned(m, id, -1)
+	case "down":
+		th, err = s.store.MovePinned(m, id, 1)
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if err == forum.ErrCannotPin {
+		http.Error(w, "不能置顶", http.StatusForbidden)
+		return
+	}
+	if err == forum.ErrNotFound {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/boards/"+strconv.FormatInt(th.BoardID, 10), http.StatusSeeOther)
 }

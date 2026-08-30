@@ -8,8 +8,18 @@
 <ul class="threads">
 {{range .Threads}}
   <li>
+    {{if .Pinned}}<span class="badge">置顶</span>{{end}}
     <a href="/threads/{{.ID}}">{{.Title}}</a>
     <span class="muted">{{.AuthorDisplayName}} <b class="login">{{.AuthorLoginName}}</b></span>
+    {{if $.CanPin}}
+      {{if .Pinned}}
+      <form class="inline" method="post" action="/threads/{{.ID}}/pin-up"><button type="submit">上移</button></form>
+      <form class="inline" method="post" action="/threads/{{.ID}}/pin-down"><button type="submit">下移</button></form>
+      <form class="inline" method="post" action="/threads/{{.ID}}/unpin"><button type="submit">取消置顶</button></form>
+      {{else}}
+      <form class="inline" method="post" action="/threads/{{.ID}}/pin"><button type="submit">置顶</button></form>
+      {{end}}
+    {{end}}
   </li>
 {{end}}
 </ul>
