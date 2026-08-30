@@ -755,6 +755,64 @@ func (s *Store) SearchThreads(viewer *forum.Member, query string) ([]forum.Threa
 	return out, rows.Err()
 }
 
+func (s *Store) ListThreadsByAuthor(viewer *forum.Member, authorID int64) ([]forum.ThreadView, error) {
+	viewerID := int64(0)
+	if viewer != nil {
+		viewerID = viewer.ID
+	}
+	staff := forum.CanHidePost(viewer)
+	staffN := 0
+	if staff {
+		staffN = 1
+	}
+	q := `
+		SELECT t.id, t.board_id, t.title, t.author_id, t.created_at, t.last_post_at, t.title_edited_at, t.pin_rank, t.locked,
+		       m.login_name, m.display_name,
+		       COALESCE((SELECT p.hidden FROM posts p WHERE p.thread_id = t.id AND p.floor = 1), 0),
+		       b.name, b.disabled,
+		       COALESCE((SELECT MAX(p.floor) FROM posts p WHERE p.thread_id = t.id), 0),
+		       r.last_read_floor
+		FROM threads t
+		JOIN members m ON m.id = t.author_id
+		JOIN boards b ON b.id = t.board_id
+		LEFT JOIN thread_reads r ON r.thread_id = t.id AND r.member_id = ?
+		WHERE t.author_id = ?
+		  AND (? = 1 OR b.disabled = 0)
+		ORDER BY t.last_post_at DESC, t.id DESC
+	`
+	rows, err := s.db.Query(q, viewerID, authorID, staffN)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []forum.ThreadView
+	for rows.Next() {
+		var v forum.ThreadView
+		var created, last string
+		var titleEdited sql.NullString
+		var hidden, disabled, maxFloor, locked int
+		var lastRead sql.NullInt64
+		if err := rows.Scan(&v.ID, &v.BoardID, &v.Title, &v.AuthorID, &created, &last, &titleEdited, &v.PinRank, &locked, &v.AuthorLoginName, &v.AuthorDisplayName, &hidden, &v.BoardName, &disabled, &maxFloor, &lastRead); err != nil {
+			return nil, err
+		}
+		v.CreatedAt = parseTime(created)
+		v.LastPostAt = parseTime(last)
+		if titleEdited.Valid && titleEdited.String != "" {
+			tm := parseTime(titleEdited.String)
+			v.TitleEditedAt = &tm
+		}
+		v.Locked = locked != 0
+		v.FirstHidden = hidden != 0
+		v.BoardDisabled = disabled != 0
+		if v.FirstHidden && !staff {
+			continue
+		}
+		v.Unread = forum.ThreadUnread(int(lastRead.Int64), maxFloor, lastRead.Valid)
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 func likeEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `%`, `\%`)

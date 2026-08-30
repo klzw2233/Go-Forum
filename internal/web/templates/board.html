@@ -20,7 +20,7 @@
     {{if .Unread}}<span class="badge">未读</span>{{end}}
     {{if .Locked}}<span class="badge">已锁定</span>{{end}}
     <a href="/threads/{{.ID}}">{{.Title}}</a>
-    <span class="muted">{{.AuthorDisplayName}} <b class="login">{{.AuthorLoginName}}</b></span>
+    <span class="muted">{{.AuthorDisplayName}} <a href="/u/{{.AuthorLoginName}}"><b class="login">{{.AuthorLoginName}}</b></a></span>
     {{if $.CanPin}}
       {{if .Pinned}}
       <form class="inline" method="post" action="/threads/{{.ID}}/pin-up"><button type="submit">上移</button></form>
