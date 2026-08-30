@@ -1609,3 +1609,53 @@ func TestLockThreadHTTP(t *testing.T) {
 		t.Fatalf("board list: %s", body)
 	}
 }
+
+func TestMentionNotifyHTTP(t *testing.T) {
+	ts, founderC := testServer(t)
+	loginFounder(t, ts, founderC)
+	res, err := founderC.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}, "description": {""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	registerMember(t, ts, founderC, "wang", "老王")
+	res, err = founderC.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"主题"}, "body": {"@jimmy 看这里"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("new thread %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	loginFounder(t, ts, founderC)
+	res, err = founderC.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := readBody(t, res)
+	if !strings.Contains(home, `href="/notifications"`) || !strings.Contains(home, ">1<") {
+		t.Fatalf("unread badge: %s", home)
+	}
+	res, err = founderC.Get(ts.URL + "/notifications")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readBody(t, res)
+	if !strings.Contains(body, "点了你的名") || !strings.Contains(body, "主题") {
+		t.Fatalf("list: %s", body)
+	}
+	res, err = founderC.PostForm(ts.URL+"/notifications/1/read", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("read %d", res.StatusCode)
+	}
+	loc := res.Header.Get("Location")
+	if !strings.Contains(loc, "/threads/1") {
+		t.Fatalf("location %s", loc)
+	}
+	res.Body.Close()
+}

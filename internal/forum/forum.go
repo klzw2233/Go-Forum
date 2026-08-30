@@ -142,6 +142,40 @@ func (c InviteCode) Status() string {
 	return "未使用"
 }
 
+type NotifyKind string
+
+const (
+	NotifyMention NotifyKind = "mention"
+	NotifyReply   NotifyKind = "reply"
+	// later: NotifyMessage, NotifySystem — same table, new kind values
+)
+
+type Notification struct {
+	ID           int64
+	MemberID     int64
+	Kind         NotifyKind
+	ThreadID     int64
+	PostID       int64
+	ActorID      int64
+	ActorLogin   string
+	ActorDisplay string
+	ThreadTitle  string
+	Floor        int
+	CreatedAt    time.Time
+	Read         bool
+}
+
+func (n Notification) KindLabel() string {
+	switch n.Kind {
+	case NotifyMention:
+		return "点了你的名"
+	case NotifyReply:
+		return "回了你的主题"
+	default:
+		return string(n.Kind)
+	}
+}
+
 type Edit struct {
 	ID           int64
 	PostID       int64
@@ -164,6 +198,41 @@ func ValidLoginName(s string) bool {
 		}
 	}
 	return len(s) >= minLoginNameLen
+}
+
+func MentionedLoginNames(body string) []string {
+	seen := map[string]bool{}
+	var out []string
+	i := 0
+	for i < len(body) {
+		if body[i] != '@' {
+			i++
+			continue
+		}
+		if i > 0 {
+			c := body[i-1]
+			if c != ' ' && c != '\n' && c != '\t' && c != '\r' {
+				i++
+				continue
+			}
+		}
+		j := i + 1
+		for j < len(body) {
+			c := body[j]
+			ok := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'
+			if !ok {
+				break
+			}
+			j++
+		}
+		name := body[i+1 : j]
+		if ValidLoginName(name) && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+		i = j
+	}
+	return out
 }
 
 func NormalizeDisplayName(s string) (string, error) {

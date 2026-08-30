@@ -1,0 +1,18 @@
+{{define "title"}}通知{{end}}
+{{define "content"}}
+<h1>通知</h1>
+{{if .Notifications}}
+<form class="inline" method="post" action="/notifications/read-all"><button type="submit">全部标已读</button></form>
+{{end}}
+{{if not .Notifications}}<p class="muted">还没有通知。</p>{{end}}
+<ul class="threads">
+{{range .Notifications}}
+  <li{{if not .Read}} class="unread-notice"{{end}}>
+    <form class="inline" method="post" action="/notifications/{{.ID}}/read">
+      <button type="submit">{{.ActorDisplay}} <b class="login">{{.ActorLogin}}</b> {{.KindLabel}} · {{.ThreadTitle}} #{{.Floor}}</button>
+    </form>
+    <span class="muted">{{.CreatedAt.UTC.Format "2006-01-02 15:04"}} UTC</span>
+  </li>
+{{end}}
+</ul>
+{{end}}

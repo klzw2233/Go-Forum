@@ -78,6 +78,18 @@ CREATE TABLE IF NOT EXISTS thread_reads (
 		PRIMARY KEY (member_id, thread_id)
 	);
 
+CREATE TABLE IF NOT EXISTS notifications (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		member_id INTEGER NOT NULL REFERENCES members(id),
+		kind TEXT NOT NULL,
+		thread_id INTEGER NOT NULL REFERENCES threads(id),
+		post_id INTEGER NOT NULL REFERENCES posts(id),
+		actor_id INTEGER NOT NULL REFERENCES members(id),
+		created_at TEXT NOT NULL,
+		read INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_notifications_member ON notifications(member_id, id DESC);
+
 	CREATE TABLE IF NOT EXISTS post_edits (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		post_id INTEGER NOT NULL REFERENCES posts(id),
@@ -120,6 +132,17 @@ func Open(path string) (*Store, error) {
 			PRIMARY KEY (member_id, thread_id)
 		)`,
 		`ALTER TABLE threads ADD COLUMN locked INTEGER NOT NULL DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS notifications (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			member_id INTEGER NOT NULL REFERENCES members(id),
+			kind TEXT NOT NULL,
+			thread_id INTEGER NOT NULL REFERENCES threads(id),
+			post_id INTEGER NOT NULL REFERENCES posts(id),
+			actor_id INTEGER NOT NULL REFERENCES members(id),
+			created_at TEXT NOT NULL,
+			read INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_member ON notifications(member_id, id DESC)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -597,6 +620,7 @@ func (s *Store) CreateThread(boardID, authorID int64, title, body string) (*foru
 		BodyMarkdown: body,
 		CreatedAt:    parseTime(ts),
 	}
+	s.notifyForPost(th, p, body)
 	return th, p, nil
 }
 
@@ -825,14 +849,16 @@ func (s *Store) CreatePost(threadID, authorID int64, body string) (*forum.Post, 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return &forum.Post{
+	p := &forum.Post{
 		ID:           id,
 		ThreadID:     threadID,
 		AuthorID:     authorID,
 		Floor:        floor,
 		BodyMarkdown: body,
 		CreatedAt:    parseTime(ts),
-	}, nil
+	}
+	s.notifyForPost(th, p, body)
+	return p, nil
 }
 
 func (s *Store) ListPosts(threadID int64) ([]forum.PostView, error) {
@@ -867,6 +893,131 @@ func (s *Store) ListPosts(threadID int64) ([]forum.PostView, error) {
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) notifyForPost(th *forum.Thread, p *forum.Post, body string) {
+	if th == nil || p == nil {
+		return
+	}
+	b, err := s.BoardByID(th.BoardID)
+	if err != nil {
+		return
+	}
+	ts := now()
+	seen := map[int64]bool{p.AuthorID: true}
+	for _, login := range forum.MentionedLoginNames(body) {
+		m, _, err := s.MemberByLogin(login)
+		if err != nil || seen[m.ID] {
+			continue
+		}
+		if !s.canNotify(m, b, th) {
+			continue
+		}
+		seen[m.ID] = true
+		_, _ = s.db.Exec(
+			`INSERT INTO notifications (member_id, kind, thread_id, post_id, actor_id, created_at, read) VALUES (?, ?, ?, ?, ?, ?, 0)`,
+			m.ID, string(forum.NotifyMention), th.ID, p.ID, p.AuthorID, ts,
+		)
+	}
+	if p.Floor > forum.FirstFloor && th.AuthorID != p.AuthorID && !seen[th.AuthorID] {
+		author, err := s.MemberByID(th.AuthorID)
+		if err == nil && s.canNotify(author, b, th) {
+			_, _ = s.db.Exec(
+				`INSERT INTO notifications (member_id, kind, thread_id, post_id, actor_id, created_at, read) VALUES (?, ?, ?, ?, ?, ?, 0)`,
+				author.ID, string(forum.NotifyReply), th.ID, p.ID, p.AuthorID, ts,
+			)
+		}
+	}
+}
+
+func (s *Store) canNotify(m *forum.Member, b *forum.Board, th *forum.Thread) bool {
+	if m == nil || b == nil || th == nil {
+		return false
+	}
+	if !forum.CanSeeBoard(m, b) {
+		return false
+	}
+	posts, err := s.ListPosts(th.ID)
+	if err != nil {
+		return false
+	}
+	if forum.ThreadHiddenFromMembers(posts) && !forum.CanHidePost(m) {
+		return false
+	}
+	return true
+}
+
+func (s *Store) ListNotifications(memberID int64) ([]forum.Notification, error) {
+	rows, err := s.db.Query(`
+		SELECT n.id, n.member_id, n.kind, n.thread_id, n.post_id, n.actor_id, n.created_at, n.read,
+		       a.login_name, a.display_name, t.title, p.floor
+		FROM notifications n
+		JOIN members a ON a.id = n.actor_id
+		JOIN threads t ON t.id = n.thread_id
+		JOIN posts p ON p.id = n.post_id
+		WHERE n.member_id = ?
+		ORDER BY n.id DESC
+	`, memberID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []forum.Notification
+	for rows.Next() {
+		var n forum.Notification
+		var created string
+		var read int
+		if err := rows.Scan(&n.ID, &n.MemberID, &n.Kind, &n.ThreadID, &n.PostID, &n.ActorID, &created, &read, &n.ActorLogin, &n.ActorDisplay, &n.ThreadTitle, &n.Floor); err != nil {
+			return nil, err
+		}
+		n.CreatedAt = parseTime(created)
+		n.Read = read != 0
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UnreadNotificationCount(memberID int64) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM notifications WHERE member_id = ? AND read = 0`, memberID).Scan(&n)
+	return n, err
+}
+
+func (s *Store) MarkNotificationRead(memberID, id int64) (*forum.Notification, error) {
+	res, err := s.db.Exec(`UPDATE notifications SET read = 1 WHERE id = ? AND member_id = ?`, id, memberID)
+	if err != nil {
+		return nil, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, forum.ErrNotFound
+	}
+	var note forum.Notification
+	var created string
+	var read int
+	err = s.db.QueryRow(`
+		SELECT n.id, n.member_id, n.kind, n.thread_id, n.post_id, n.actor_id, n.created_at, n.read,
+		       a.login_name, a.display_name, t.title, p.floor
+		FROM notifications n
+		JOIN members a ON a.id = n.actor_id
+		JOIN threads t ON t.id = n.thread_id
+		JOIN posts p ON p.id = n.post_id
+		WHERE n.id = ?
+	`, id).Scan(&note.ID, &note.MemberID, &note.Kind, &note.ThreadID, &note.PostID, &note.ActorID, &created, &read, &note.ActorLogin, &note.ActorDisplay, &note.ThreadTitle, &note.Floor)
+	if err != nil {
+		return nil, err
+	}
+	note.CreatedAt = parseTime(created)
+	note.Read = true
+	return &note, nil
+}
+
+func (s *Store) MarkAllNotificationsRead(memberID int64) error {
+	_, err := s.db.Exec(`UPDATE notifications SET read = 1 WHERE member_id = ? AND read = 0`, memberID)
+	return err
 }
 
 func scanInvite(scanner interface {

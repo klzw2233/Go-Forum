@@ -6,6 +6,22 @@ import (
 	"time"
 )
 
+func TestMentionedLoginNames(t *testing.T) {
+	got := MentionedLoginNames("hi @wang and @jimmy, also @wang again and @1bad and email@x.com @ok_1")
+	want := []string{"wang", "jimmy", "ok_1"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v want %v", got, want)
+		}
+	}
+	if MentionedLoginNames("@") != nil && len(MentionedLoginNames("@")) != 0 {
+		t.Fatalf("bare at: %v", MentionedLoginNames("@"))
+	}
+}
+
 func TestValidLoginName(t *testing.T) {
 	ok := []string{"a", "jimmy", "Wang", "a1", "a_b", "A0_z", "abcdefghijabcdefghijabcdefghijab"}
 	for _, s := range ok {
