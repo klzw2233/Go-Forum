@@ -903,3 +903,142 @@ func TestDisableBoardHidesFromMembers(t *testing.T) {
 	}
 	res.Body.Close()
 }
+
+func newClient() *http.Client {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		panic(err)
+	}
+	return &http.Client{
+		Jar: jar,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func TestSuspendMember(t *testing.T) {
+	ts, founderC := testServer(t)
+	loginFounder(t, ts, founderC)
+
+	res, err := founderC.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}, "description": {""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	res, err = founderC.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"旧帖"}, "body": {"还在"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+
+	res, err = founderC.PostForm(ts.URL+"/invites", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	body := readBody(t, res)
+	m := regexp.MustCompile(`刚发出：<code class="invite">([^<]+)</code>`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("invite missing: %s", body)
+	}
+
+	wangC := newClient()
+	res, err = wangC.PostForm(ts.URL+"/register", url.Values{
+		"code": {m[1]}, "login_name": {"wang"}, "display_name": {"老王"}, "password": {"hunter2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, wangC, res)
+	_ = readBody(t, res)
+
+	res, err = wangC.Get(ts.URL + "/members")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member GET /members = %d", res.StatusCode)
+	}
+	res.Body.Close()
+	res, err = wangC.PostForm(ts.URL+"/members/1/suspend", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("member POST suspend = %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = founderC.Get(ts.URL + "/members")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "wang") || !strings.Contains(body, "/members/2/suspend") {
+		t.Fatalf("members page: %s", body)
+	}
+	res, err = founderC.PostForm(ts.URL+"/members/1/suspend", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("suspend founder = %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = founderC.PostForm(ts.URL+"/members/2/suspend", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	body = readBody(t, res)
+	if !strings.Contains(body, "已停用") || !strings.Contains(body, "/members/2/unsuspend") {
+		t.Fatalf("after suspend: %s", body)
+	}
+
+	res, err = wangC.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/login" {
+		t.Fatalf("suspended session: %d loc=%s", res.StatusCode, res.Header.Get("Location"))
+	}
+	res.Body.Close()
+
+	res, err = wangC.PostForm(ts.URL+"/login", url.Values{"login_name": {"wang"}, "password": {"hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "此账号已停用") {
+		t.Fatalf("suspended login: %d %s", res.StatusCode, body)
+	}
+
+	res, err = founderC.Get(ts.URL + "/threads/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "还在") {
+		t.Fatalf("old post gone: %s", body)
+	}
+
+	res, err = founderC.PostForm(ts.URL+"/members/2/unsuspend", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	res, err = wangC.PostForm(ts.URL+"/login", url.Values{"login_name": {"wang"}, "password": {"hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, wangC, res)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("login after restore: %d", res.StatusCode)
+	}
+	res.Body.Close()
+}

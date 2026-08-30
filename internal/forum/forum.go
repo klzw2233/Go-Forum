@@ -54,6 +54,7 @@ var (
 	ErrCannotPin         = errors.New("cannot pin threads")
 	ErrCannotManageBoard = errors.New("cannot manage boards")
 	ErrCannotMoveThread  = errors.New("cannot move threads")
+	ErrCannotSuspend     = errors.New("cannot suspend this member")
 )
 
 type Member struct {
@@ -61,6 +62,7 @@ type Member struct {
 	LoginName   string
 	DisplayName string
 	Role        Role
+	Suspended   bool
 	CreatedAt   time.Time
 }
 
@@ -267,6 +269,22 @@ func CanPin(m *Member) bool {
 
 func CanMoveThread(m *Member) bool {
 	return CanHidePost(m)
+}
+
+// CanSuspend reports whether actor may suspend or restore target.
+// Nobody may act on themselves or the founder. Operators may only
+// suspend ordinary members; the founder may also suspend operators.
+func CanSuspend(actor, target *Member) bool {
+	if actor == nil || target == nil || actor.ID == target.ID {
+		return false
+	}
+	if target.Role == RoleFounder {
+		return false
+	}
+	if actor.Role == RoleFounder {
+		return true
+	}
+	return actor.Role == RoleOperator && target.Role == RoleMember
 }
 
 func (t Thread) Pinned() bool {

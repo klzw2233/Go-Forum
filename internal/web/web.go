@@ -33,7 +33,7 @@ type Server struct {
 
 func New(st *store.Store) (*Server, error) {
 	s := &Server{store: st, mux: http.NewServeMux(), tpl: map[string]*template.Template{}}
-	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "post_edit.html", "post_edits.html", "title_edit.html"}
+	pages := []string{"login.html", "home.html", "board_new.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "post_edit.html", "post_edits.html", "title_edit.html"}
 	for _, p := range pages {
 		t, err := template.ParseFS(embedded, "templates/layout.html", "templates/"+p)
 		if err != nil {
@@ -55,6 +55,9 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("GET /invites", s.requireMember(s.getInvites))
 	s.mux.HandleFunc("POST /invites", s.requireMember(s.postInvites))
 	s.mux.HandleFunc("POST /invites/{id}/revoke", s.requireMember(s.postRevokeInvite))
+	s.mux.HandleFunc("GET /members", s.requireMember(s.getMembers))
+	s.mux.HandleFunc("POST /members/{id}/suspend", s.requireMember(s.postSuspendMember))
+	s.mux.HandleFunc("POST /members/{id}/unsuspend", s.requireMember(s.postUnsuspendMember))
 	s.mux.HandleFunc("GET /boards/new", s.requireMember(s.getBoardNew))
 	s.mux.HandleFunc("POST /boards/new", s.requireMember(s.postBoardNew))
 	s.mux.HandleFunc("GET /boards/{id}", s.requireMember(s.getBoard))
@@ -107,6 +110,13 @@ type page struct {
 	TitleEdited    string
 	CanPin         bool
 	CanMoveThread  bool
+	Members        []memberVM
+}
+
+type memberVM struct {
+	forum.Member
+	RoleLabel  string
+	CanSuspend bool
 }
 
 type postVM struct {
@@ -205,6 +215,10 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 	m, hash, err := s.store.MemberByLogin(login)
 	if err != nil || !forum.CheckPassword(hash, pass) {
 		s.render(w, "login.html", page{Error: "登录名或密码不对"})
+		return
+	}
+	if m.Suspended {
+		s.render(w, "login.html", page{Error: "此账号已停用"})
 		return
 	}
 	if err := s.loginAs(w, m); err != nil {
@@ -335,6 +349,59 @@ func (s *Server) postRevokeInvite(w http.ResponseWriter, r *http.Request, m *for
 		return
 	}
 	http.Redirect(w, r, "/invites", http.StatusSeeOther)
+}
+
+func (s *Server) getMembers(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	if !forum.CanCreateBoard(m) {
+		http.Error(w, "只有创始人或运营者能管理会员", http.StatusForbidden)
+		return
+	}
+	list, err := s.store.ListMembers()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	vms := make([]memberVM, 0, len(list))
+	for i := range list {
+		mem := list[i]
+		vms = append(vms, memberVM{
+			Member:     mem,
+			RoleLabel:  forum.RoleLabel(mem.Role),
+			CanSuspend: forum.CanSuspend(m, &mem),
+		})
+	}
+	s.render(w, "members.html", page{Member: m, Members: vms})
+}
+
+func (s *Server) postSuspendMember(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.setMemberSuspended(w, r, m, true)
+}
+
+func (s *Server) postUnsuspendMember(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.setMemberSuspended(w, r, m, false)
+}
+
+func (s *Server) setMemberSuspended(w http.ResponseWriter, r *http.Request, m *forum.Member, suspended bool) {
+	if !forum.CanCreateBoard(m) {
+		http.Error(w, "只有创始人或运营者能停用会员", http.StatusForbidden)
+		return
+	}
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	_, err := s.store.SetMemberSuspended(m, id, suspended)
+	switch err {
+	case nil:
+		http.Redirect(w, r, "/members", http.StatusSeeOther)
+	case forum.ErrCannotSuspend:
+		http.Error(w, "不能停用这个会员", http.StatusForbidden)
+	case forum.ErrNotFound:
+		http.NotFound(w, r)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func (s *Server) getBoardNew(w http.ResponseWriter, r *http.Request, m *forum.Member) {
@@ -569,6 +636,8 @@ func publicErr(err error) string {
 		return "只有创始人或运营者能停用版块"
 	case forum.ErrCannotMoveThread:
 		return "只有创始人或运营者能挪主题"
+	case forum.ErrCannotSuspend:
+		return "不能停用这个会员"
 	default:
 		return err.Error()
 	}

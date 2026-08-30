@@ -105,6 +105,7 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE threads ADD COLUMN title_edited_at TEXT`,
 		`ALTER TABLE threads ADD COLUMN pin_rank INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE boards ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE members ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -164,10 +165,11 @@ func (s *Store) EnsureFounder(loginName, displayName, passwordHash string) (*for
 func (s *Store) MemberByLogin(loginName string) (*forum.Member, string, error) {
 	var m forum.Member
 	var hash, created, role string
+	var suspended int
 	err := s.db.QueryRow(
-		`SELECT id, login_name, display_name, password_hash, role, created_at FROM members WHERE login_name = ?`,
+		`SELECT id, login_name, display_name, password_hash, role, suspended, created_at FROM members WHERE login_name = ?`,
 		loginName,
-	).Scan(&m.ID, &m.LoginName, &m.DisplayName, &hash, &role, &created)
+	).Scan(&m.ID, &m.LoginName, &m.DisplayName, &hash, &role, &suspended, &created)
 	if err == sql.ErrNoRows {
 		return nil, "", forum.ErrNotFound
 	}
@@ -175,6 +177,7 @@ func (s *Store) MemberByLogin(loginName string) (*forum.Member, string, error) {
 		return nil, "", err
 	}
 	m.Role = forum.Role(role)
+	m.Suspended = suspended != 0
 	m.CreatedAt = parseTime(created)
 	return &m, hash, nil
 }
@@ -182,10 +185,11 @@ func (s *Store) MemberByLogin(loginName string) (*forum.Member, string, error) {
 func (s *Store) MemberByID(id int64) (*forum.Member, error) {
 	var m forum.Member
 	var created, role string
+	var suspended int
 	err := s.db.QueryRow(
-		`SELECT id, login_name, display_name, role, created_at FROM members WHERE id = ?`,
+		`SELECT id, login_name, display_name, role, suspended, created_at FROM members WHERE id = ?`,
 		id,
-	).Scan(&m.ID, &m.LoginName, &m.DisplayName, &role, &created)
+	).Scan(&m.ID, &m.LoginName, &m.DisplayName, &role, &suspended, &created)
 	if err == sql.ErrNoRows {
 		return nil, forum.ErrNotFound
 	}
@@ -193,6 +197,7 @@ func (s *Store) MemberByID(id int64) (*forum.Member, error) {
 		return nil, err
 	}
 	m.Role = forum.Role(role)
+	m.Suspended = suspended != 0
 	m.CreatedAt = parseTime(created)
 	return &m, nil
 }
@@ -219,12 +224,70 @@ func (s *Store) MemberBySession(token string) (*forum.Member, error) {
 		_, _ = s.db.Exec(`DELETE FROM sessions WHERE id = ?`, token)
 		return nil, forum.ErrNotFound
 	}
-	return s.MemberByID(memberID)
+	m, err := s.MemberByID(memberID)
+	if err != nil {
+		return nil, err
+	}
+	if m.Suspended {
+		_, _ = s.db.Exec(`DELETE FROM sessions WHERE id = ?`, token)
+		return nil, forum.ErrNotFound
+	}
+	return m, nil
 }
 
 func (s *Store) DeleteSession(token string) error {
 	_, err := s.db.Exec(`DELETE FROM sessions WHERE id = ?`, token)
 	return err
+}
+
+func (s *Store) deleteSessionsForMember(memberID int64) error {
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE member_id = ?`, memberID)
+	return err
+}
+
+func (s *Store) ListMembers() ([]forum.Member, error) {
+	rows, err := s.db.Query(`SELECT id, login_name, display_name, role, suspended, created_at FROM members ORDER BY id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []forum.Member
+	for rows.Next() {
+		var m forum.Member
+		var created, role string
+		var suspended int
+		if err := rows.Scan(&m.ID, &m.LoginName, &m.DisplayName, &role, &suspended, &created); err != nil {
+			return nil, err
+		}
+		m.Role = forum.Role(role)
+		m.Suspended = suspended != 0
+		m.CreatedAt = parseTime(created)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetMemberSuspended(actor *forum.Member, id int64, suspended bool) (*forum.Member, error) {
+	target, err := s.MemberByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if !forum.CanSuspend(actor, target) {
+		return nil, forum.ErrCannotSuspend
+	}
+	v := 0
+	if suspended {
+		v = 1
+	}
+	if _, err := s.db.Exec(`UPDATE members SET suspended = ? WHERE id = ?`, v, id); err != nil {
+		return nil, err
+	}
+	if suspended {
+		if err := s.deleteSessionsForMember(id); err != nil {
+			return nil, err
+		}
+	}
+	return s.MemberByID(id)
 }
 
 func (s *Store) CreateBoard(name, description string) (*forum.Board, error) {
