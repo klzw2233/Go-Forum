@@ -53,6 +53,7 @@ var (
 	ErrCannotReply       = errors.New("cannot reply to this thread")
 	ErrCannotEditTitle   = errors.New("cannot edit this title")
 	ErrCannotPin         = errors.New("cannot pin threads")
+	ErrCannotLock        = errors.New("cannot lock threads")
 	ErrCannotManageBoard = errors.New("cannot manage boards")
 	ErrCannotMoveThread  = errors.New("cannot move threads")
 	ErrCannotSuspend     = errors.New("cannot suspend this member")
@@ -89,6 +90,7 @@ type Thread struct {
 	LastPostAt    time.Time
 	TitleEditedAt *time.Time
 	PinRank       int
+	Locked        bool
 }
 
 type Post struct {
@@ -284,6 +286,20 @@ func CanEditTitle(m *Member, th *Thread, firstFloorHidden bool) bool {
 
 func CanPin(m *Member) bool {
 	return CanHidePost(m)
+}
+
+func CanLock(m *Member) bool {
+	return CanHidePost(m)
+}
+
+func CanReply(m *Member, th *Thread) bool {
+	if m == nil || th == nil {
+		return false
+	}
+	if !th.Locked {
+		return true
+	}
+	return CanLock(m)
 }
 
 func CanMoveThread(m *Member) bool {

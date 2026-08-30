@@ -185,6 +185,25 @@ func (s *Store) PinThread(actor *forum.Member, threadID int64) (*forum.Thread, e
 	return th, nil
 }
 
+func (s *Store) SetThreadLocked(actor *forum.Member, threadID int64, locked bool) (*forum.Thread, error) {
+	if !forum.CanLock(actor) {
+		return nil, forum.ErrCannotLock
+	}
+	th, err := s.ThreadByID(threadID)
+	if err != nil {
+		return nil, err
+	}
+	v := 0
+	if locked {
+		v = 1
+	}
+	if _, err := s.db.Exec(`UPDATE threads SET locked = ? WHERE id = ?`, v, threadID); err != nil {
+		return nil, err
+	}
+	th.Locked = locked
+	return th, nil
+}
+
 func (s *Store) UnpinThread(actor *forum.Member, threadID int64) (*forum.Thread, error) {
 	if !forum.CanPin(actor) {
 		return nil, forum.ErrCannotPin

@@ -92,6 +92,8 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("POST /threads/{id}/pin-down", s.requireMember(s.postPinDown))
 	s.mux.HandleFunc("GET /threads/{id}/move", s.requireMember(s.getThreadMove))
 	s.mux.HandleFunc("POST /threads/{id}/move", s.requireMember(s.postThreadMove))
+	s.mux.HandleFunc("POST /threads/{id}/lock", s.requireMember(s.postLockThread))
+	s.mux.HandleFunc("POST /threads/{id}/unlock", s.requireMember(s.postUnlockThread))
 	return s, nil
 }
 
@@ -122,6 +124,8 @@ type page struct {
 	TitleEdited    string
 	CanPin         bool
 	CanMoveThread  bool
+	CanLock        bool
+	CanReply       bool
 	Members        []memberVM
 	Target         *forum.Member
 	Query          string
@@ -187,6 +191,7 @@ func (s *Server) render(w http.ResponseWriter, name string, p page) {
 		p.CanHide = forum.CanHidePost(p.Member)
 		p.CanPin = forum.CanPin(p.Member)
 		p.CanMoveThread = forum.CanMoveThread(p.Member)
+		p.CanLock = forum.CanLock(p.Member)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout.html", p); err != nil {
@@ -776,7 +781,7 @@ func (s *Server) getThread(w http.ResponseWriter, r *http.Request, m *forum.Memb
 	if maxFloor >= forum.FirstFloor {
 		_ = s.store.MarkThreadRead(m.ID, th.ID, maxFloor)
 	}
-	pg := page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts), ThreadHidden: hidden, CanEditTitle: forum.CanEditTitle(m, th, hidden)}
+	pg := page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts), ThreadHidden: hidden, CanEditTitle: forum.CanEditTitle(m, th, hidden), CanReply: forum.CanReply(m, th)}
 	if th.TitleEditedAt != nil {
 		pg.TitleEdited = "标题已改 " + forum.FormatTimeUTC(*th.TitleEditedAt) + " UTC"
 	}
@@ -813,9 +818,13 @@ func (s *Server) postReply(w http.ResponseWriter, r *http.Request, m *forum.Memb
 		return
 	}
 	if _, err := s.store.CreatePost(th.ID, m.ID, r.FormValue("body")); err != nil {
+		if err == forum.ErrCannotReply {
+			http.Error(w, "这篇主题已锁定", http.StatusForbidden)
+			return
+		}
 		b, _ := s.store.BoardByID(th.BoardID)
 		posts, _ := s.store.ListPosts(th.ID)
-		s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts), Error: err.Error()})
+		s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts), Error: publicErr(err), CanReply: forum.CanReply(m, th)})
 		return
 	}
 	http.Redirect(w, r, "/threads/"+strconv.FormatInt(th.ID, 10), http.StatusSeeOther)
@@ -871,7 +880,9 @@ func publicErr(err error) string {
 	case forum.ErrCannotHidePost:
 		return "不能隐藏这篇帖"
 	case forum.ErrCannotReply:
-		return "不能回复这篇主题"
+		return "这篇主题已锁定"
+	case forum.ErrCannotLock:
+		return "只有创始人或运营者能锁定主题"
 	case forum.ErrCannotPin:
 		return "不能置顶"
 	case forum.ErrCannotManageBoard:
@@ -1124,6 +1135,33 @@ func (s *Server) pinAction(w http.ResponseWriter, r *http.Request, m *forum.Memb
 		return
 	}
 	http.Redirect(w, r, "/boards/"+strconv.FormatInt(th.BoardID, 10), http.StatusSeeOther)
+}
+
+func (s *Server) postLockThread(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.setThreadLocked(w, r, m, true)
+}
+
+func (s *Server) postUnlockThread(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.setThreadLocked(w, r, m, false)
+}
+
+func (s *Server) setThreadLocked(w http.ResponseWriter, r *http.Request, m *forum.Member, locked bool) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	th, err := s.store.SetThreadLocked(m, id, locked)
+	switch err {
+	case nil:
+		http.Redirect(w, r, "/threads/"+strconv.FormatInt(th.ID, 10), http.StatusSeeOther)
+	case forum.ErrCannotLock:
+		http.Error(w, "只有创始人或运营者能锁定主题", http.StatusForbidden)
+	case forum.ErrNotFound:
+		http.NotFound(w, r)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func (s *Server) getThreadMove(w http.ResponseWriter, r *http.Request, m *forum.Member) {

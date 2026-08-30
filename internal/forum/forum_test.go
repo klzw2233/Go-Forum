@@ -160,6 +160,25 @@ func TestCanEditHiddenPost(t *testing.T) {
 	}
 }
 
+func TestCanReplyLocked(t *testing.T) {
+	open := &Thread{}
+	locked := &Thread{Locked: true}
+	mem := &Member{Role: RoleMember}
+	op := &Member{Role: RoleOperator}
+	if CanReply(nil, open) || !CanReply(mem, open) {
+		t.Fatal("open thread")
+	}
+	if CanReply(mem, locked) {
+		t.Fatal("member must not reply locked")
+	}
+	if !CanReply(op, locked) || !CanReply(&Member{Role: RoleFounder}, locked) {
+		t.Fatal("staff must reply locked")
+	}
+	if CanLock(nil) || CanLock(mem) || !CanLock(op) {
+		t.Fatal("lock permission")
+	}
+}
+
 func TestCanHidePost(t *testing.T) {
 	if CanHidePost(nil) || CanHidePost(&Member{Role: RoleMember}) {
 		t.Fatal("member must not hide")

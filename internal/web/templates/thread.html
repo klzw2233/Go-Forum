@@ -4,10 +4,17 @@
 {{if and .ThreadHidden (not .CanHide)}}
 <h1>这篇主题不可见</h1>
 {{else}}
-<h1>{{.Thread.Title}}</h1>
+<h1>{{.Thread.Title}}{{if .Thread.Locked}} <span class="badge">已锁定</span>{{end}}</h1>
 {{if .TitleEdited}}<p class="muted">{{.TitleEdited}}</p>{{end}}
 {{if .CanEditTitle}}<p><a href="/threads/{{.Thread.ID}}/title">改标题</a></p>{{end}}
 {{if .CanMoveThread}}<p><a href="/threads/{{.Thread.ID}}/move">挪版</a></p>{{end}}
+{{if .CanLock}}
+  {{if .Thread.Locked}}
+  <form class="inline" method="post" action="/threads/{{.Thread.ID}}/unlock"><button type="submit">解锁</button></form>
+  {{else}}
+  <form class="inline" method="post" action="/threads/{{.Thread.ID}}/lock"><button type="submit">锁定</button></form>
+  {{end}}
+{{end}}
 {{range .Posts}}
 <article class="post" id="floor-{{.Floor}}">
   <header>
@@ -28,11 +35,15 @@
   {{if .ShowBody}}<div class="body">{{.BodyHTML}}</div>{{end}}
 </article>
 {{end}}
+{{if .CanReply}}
 <h2>回帖</h2>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 <form method="post" action="/threads/{{.Thread.ID}}/posts">
   <label>正文（Markdown） <textarea name="body" rows="8" required></textarea></label>
   <button type="submit">回复</button>
 </form>
+{{else}}
+<p class="muted">已锁定，不能回帖。</p>
+{{end}}
 {{end}}
 {{end}}
