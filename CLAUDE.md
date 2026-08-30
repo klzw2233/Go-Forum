@@ -1,6 +1,8 @@
 # CLAUDE.md
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Grow this file to record important repository guidance.
+
 You are fast at code. Do not default to line-by-line human review as the quality gate. Use failing checks; continue until they pass. In a team, still keep review for who approved and who else knows the code exists.
 
 ## 1. Start small
