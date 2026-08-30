@@ -1009,3 +1009,68 @@ func TestSearchThreads(t *testing.T) {
 		t.Fatalf("staff hidden thread: %+v err=%v", got, err)
 	}
 }
+
+func TestThreadUnreadMarks(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "unreadcodeaaa"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("unreadcodeaaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, p1, err := s.CreateThread(b.ID, mem.ID, "主题", "一楼")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := s.ListThreads(b.ID, mem)
+	if err != nil || len(list) != 1 || !list[0].Unread {
+		t.Fatalf("never opened: %+v err=%v", list, err)
+	}
+	if err := s.MarkThreadRead(mem.ID, th.ID, p1.Floor); err != nil {
+		t.Fatal(err)
+	}
+	list, err = s.ListThreads(b.ID, mem)
+	if err != nil || list[0].Unread {
+		t.Fatalf("after read: %+v err=%v", list, err)
+	}
+
+	p2, err := s.CreatePost(th.ID, f.ID, "二楼")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err = s.ListThreads(b.ID, mem)
+	if err != nil || !list[0].Unread {
+		t.Fatalf("after reply: %+v err=%v", list, err)
+	}
+	if _, err := s.UpdatePost(mem, p1.ID, "改过的一楼"); err != nil {
+		t.Fatal(err)
+	}
+	list, err = s.ListThreads(b.ID, mem)
+	if err != nil || !list[0].Unread {
+		t.Fatalf("edit should keep unread: %+v err=%v", list, err)
+	}
+
+	if err := s.MarkThreadRead(mem.ID, th.ID, p2.Floor); err != nil {
+		t.Fatal(err)
+	}
+	list, err = s.ListThreads(b.ID, mem)
+	if err != nil || list[0].Unread {
+		t.Fatalf("caught up: %+v err=%v", list, err)
+	}
+
+	got, err := s.SearchThreads(mem, "主题")
+	if err != nil || len(got) != 1 || got[0].Unread {
+		t.Fatalf("search after catch-up: %+v err=%v", got, err)
+	}
+}

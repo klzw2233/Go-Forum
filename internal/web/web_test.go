@@ -1462,3 +1462,70 @@ func TestSearchVisibility(t *testing.T) {
 		t.Fatalf("search box missing: %s", home)
 	}
 }
+
+func TestUnreadBadge(t *testing.T) {
+	ts, founderC := testServer(t)
+	loginFounder(t, ts, founderC)
+
+	res, err := founderC.PostForm(ts.URL+"/boards/new", url.Values{"name": {"灌水"}, "description": {""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	registerMember(t, ts, founderC, "wang", "老王")
+	res, err = founderC.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"主题"}, "body": {"一楼"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create thread %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = founderC.Get(ts.URL + "/boards/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readBody(t, res)
+	if !strings.Contains(body, "未读") {
+		t.Fatalf("member should see unread: %s", body)
+	}
+
+	res, err = founderC.Get(ts.URL + "/threads/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = readBody(t, res)
+	res, err = founderC.Get(ts.URL + "/boards/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if strings.Contains(body, "未读") {
+		t.Fatalf("after open still unread: %s", body)
+	}
+
+	loginFounder(t, ts, founderC)
+	res, err = founderC.PostForm(ts.URL+"/threads/1/posts", url.Values{"body": {"二楼"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+
+	res, err = founderC.PostForm(ts.URL+"/login", url.Values{"login_name": {"wang"}, "password": {"hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+	res, err = founderC.Get(ts.URL + "/boards/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "未读") {
+		t.Fatalf("after reply not unread: %s", body)
+	}
+}
