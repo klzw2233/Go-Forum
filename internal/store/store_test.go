@@ -544,6 +544,97 @@ func TestSetBoardDisabled(t *testing.T) {
 	}
 }
 
+func TestMoveThread(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "movecodeaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("movecodeaaaaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b1, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, err := s.CreateBoard("技术", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, p1, err := s.CreateThread(b1.ID, mem.ID, "挪我", "一楼")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreatePost(th.ID, mem.ID, "二楼"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PinThread(f, th.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.ThreadByID(th.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.MoveThread(mem, th.ID, b2.ID); err != forum.ErrCannotMoveThread {
+		t.Fatalf("member move: %v", err)
+	}
+	if _, err := s.MoveThread(f, th.ID, b2.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Appears in new board, gone from old; floors and pin kept.
+	oldList, err := s.ListThreads(b1.ID, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tv := range oldList {
+		if tv.ID == th.ID {
+			t.Fatal("thread still in old board")
+		}
+	}
+	newList, err := s.ListThreads(b2.ID, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(newList) != 1 || newList[0].ID != th.ID || !newList[0].Pinned() {
+		t.Fatalf("thread not in new board or lost pin: %+v", newList)
+	}
+	posts, err := s.ListPosts(th.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(posts) != 2 || posts[0].Floor != 1 || posts[1].Floor != 2 {
+		t.Fatalf("floors changed: %+v", posts)
+	}
+	after, err := s.ThreadByID(th.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Title != "挪我" || !after.LastPostAt.Equal(before.LastPostAt) {
+		t.Fatalf("title or last_post_at changed: %+v", after)
+	}
+	_ = p1
+
+	// Unknown board / thread.
+	if _, err := s.MoveThread(f, th.ID, b2.ID+99); err != forum.ErrNotFound {
+		t.Fatalf("unknown board: %v", err)
+	}
+	if _, err := s.MoveThread(f, th.ID+99, b1.ID); err != forum.ErrNotFound {
+		t.Fatalf("unknown thread: %v", err)
+	}
+	// Moving to the same board is a noop.
+	same, err := s.MoveThread(f, th.ID, b2.ID)
+	if err != nil || same.BoardID != b2.ID {
+		t.Fatalf("same board noop: %+v err=%v", same, err)
+	}
+}
+
 func titles(in []forum.ThreadView) []string {
 	out := make([]string, len(in))
 	for i, t := range in {

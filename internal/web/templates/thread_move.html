@@ -1,0 +1,16 @@
+{{define "title"}}挪版：{{.Thread.Title}}{{end}}
+{{define "content"}}
+<p class="crumb"><a href="/">版块</a> / <a href="/threads/{{.Thread.ID}}">{{.Thread.Title}}</a> / 挪版</p>
+<h1>把「{{.Thread.Title}}」挪到别的版块</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form method="post" action="/threads/{{.Thread.ID}}/move">
+  <label>目标版块
+    <select name="board_id" required>
+      {{range .Boards}}
+      <option value="{{.ID}}"{{if eq .ID $.Thread.BoardID}} selected{{end}}>{{.Name}}{{if .Disabled}}（已停用）{{end}}</option>
+      {{end}}
+    </select>
+  </label>
+  <button type="submit">挪过去</button>
+</form>
+{{end}}
