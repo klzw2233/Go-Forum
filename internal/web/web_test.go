@@ -1687,6 +1687,17 @@ func TestProfilePage(t *testing.T) {
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, "可见主题") || !strings.Contains(body, "wang") {
 		t.Fatalf("profile: %d %s", res.StatusCode, body)
 	}
+	if !strings.Contains(body, "?tab=posts") {
+		t.Fatalf("own profile missing posts tab: %s", body)
+	}
+	res, err = founderC.Get(ts.URL + "/u/wang?tab=posts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "可见主题 #1") {
+		t.Fatalf("own posts tab: %s", body)
+	}
 	res, err = founderC.Get(ts.URL + "/u/nosuch")
 	if err != nil {
 		t.Fatal(err)

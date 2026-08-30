@@ -1274,3 +1274,65 @@ func TestListThreadsByAuthor(t *testing.T) {
 		t.Fatalf("staff missing: %+v", staff)
 	}
 }
+
+func TestListPostsByAuthor(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "ownpostcodeaa"); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := s.Register("ownpostcodeaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CreateBoard("灌水", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, p1, err := s.CreateThread(b.ID, f.ID, "别人的主题", "一楼")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := s.CreatePost(th.ID, mem.ID, "我的回帖")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = p1
+	ownTh, _, err := s.CreateThread(b.ID, mem.ID, "我的主题", "我的一楼")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ListPostsByAuthor(mem, mem.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[int64]bool{}
+	for _, v := range got {
+		ids[v.ID] = true
+	}
+	if !ids[p2.ID] {
+		t.Fatal("missing reply")
+	}
+	foundOwn := false
+	for _, v := range got {
+		if v.ThreadID == ownTh.ID && v.Floor == 1 {
+			foundOwn = true
+		}
+	}
+	if !foundOwn {
+		t.Fatal("missing own first floor")
+	}
+
+	other, err := s.ListPostsByAuthor(f, mem.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(other) < 1 {
+		t.Fatal("staff/other should still query")
+	}
+}

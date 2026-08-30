@@ -813,6 +813,59 @@ func (s *Store) ListThreadsByAuthor(viewer *forum.Member, authorID int64) ([]for
 	return out, rows.Err()
 }
 
+func (s *Store) ListPostsByAuthor(viewer *forum.Member, authorID int64) ([]forum.AuthorPostView, error) {
+	staff := forum.CanHidePost(viewer)
+	own := viewer != nil && viewer.ID == authorID
+	staffN := 0
+	if staff {
+		staffN = 1
+	}
+	ownN := 0
+	if own {
+		ownN = 1
+	}
+	q := `
+		SELECT p.id, p.thread_id, p.author_id, p.floor, p.body_markdown, p.created_at, p.edited_at, p.hidden,
+		       t.title, b.name, b.disabled,
+		       COALESCE((SELECT f.hidden FROM posts f WHERE f.thread_id = t.id AND f.floor = 1), 0)
+		FROM posts p
+		JOIN threads t ON t.id = p.thread_id
+		JOIN boards b ON b.id = t.board_id
+		WHERE p.author_id = ?
+		  AND (? = 1 OR b.disabled = 0)
+		  AND (? = 1 OR p.hidden = 0)
+		ORDER BY p.id DESC
+	`
+	rows, err := s.db.Query(q, authorID, staffN, ownN)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []forum.AuthorPostView
+	for rows.Next() {
+		var v forum.AuthorPostView
+		var created string
+		var edited sql.NullString
+		var hidden, disabled, firstHidden int
+		if err := rows.Scan(&v.ID, &v.ThreadID, &v.AuthorID, &v.Floor, &v.BodyMarkdown, &created, &edited, &hidden, &v.ThreadTitle, &v.BoardName, &disabled, &firstHidden); err != nil {
+			return nil, err
+		}
+		v.CreatedAt = parseTime(created)
+		if edited.Valid && edited.String != "" {
+			tm := parseTime(edited.String)
+			v.EditedAt = &tm
+		}
+		v.Hidden = hidden != 0
+		v.BoardDisabled = disabled != 0
+		v.ThreadHidden = firstHidden != 0
+		if v.ThreadHidden && !staff && !own {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 func likeEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `%`, `\%`)
