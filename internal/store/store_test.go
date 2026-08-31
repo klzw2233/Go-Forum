@@ -1273,6 +1273,9 @@ func TestListThreadsByAuthor(t *testing.T) {
 	if !ids[visible.ID] || !ids[hidden.ID] || !ids[inClosed.ID] {
 		t.Fatalf("staff missing: %+v", staff)
 	}
+	if staff[0].ID != inClosed.ID || staff[1].ID != hidden.ID || staff[2].ID != visible.ID {
+		t.Fatalf("want newest-created first, got %+v", staff)
+	}
 }
 
 func TestListPostsByAuthor(t *testing.T) {

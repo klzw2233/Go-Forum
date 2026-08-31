@@ -18,6 +18,7 @@
       {{if .Hidden}}<span class="badge">已隐藏</span>{{end}}
       {{if .ThreadHidden}}<span class="badge">主题不可见</span>{{end}}
       <a href="/threads/{{.ThreadID}}#floor-{{.Floor}}">{{.ThreadTitle}} #{{.Floor}}</a>
+      <span class="muted">{{.CreatedAt.UTC.Format "2006-01-02 15:04"}} UTC</span>
     </li>
   {{end}}
   </ul>
@@ -32,6 +33,7 @@
       {{if .Unread}}<span class="badge">未读</span>{{end}}
       {{if .Locked}}<span class="badge">已锁定</span>{{end}}
       <a href="/threads/{{.ID}}">{{.Title}}</a>
+      <span class="muted">{{.CreatedAt.UTC.Format "2006-01-02 15:04"}} UTC</span>
     </li>
   {{end}}
   </ul>

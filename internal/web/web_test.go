@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"go-forum/internal/forum"
 	"go-forum/internal/store"
@@ -189,6 +190,18 @@ func TestPostingLoopAndExternalImage(t *testing.T) {
 	}
 	if !strings.Contains(body, "#1") || !strings.Contains(body, "#2") {
 		t.Fatalf("floor numbers missing: %s", body)
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	if !strings.Contains(body, day) {
+		t.Fatalf("floor missing date %s: %s", day, body)
+	}
+	res, err = client.Get(ts.URL + "/boards/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, day) {
+		t.Fatalf("board list missing date %s: %s", day, body)
 	}
 }
 
@@ -1427,6 +1440,9 @@ func TestSearchVisibility(t *testing.T) {
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, "苹果派") {
 		t.Fatalf("founder title search: %d %s", res.StatusCode, body)
 	}
+	if !strings.Contains(body, time.Now().UTC().Format("2006-01-02")) {
+		t.Fatalf("search missing date: %s", body)
+	}
 	res, err = founderC.Get(ts.URL + "/search?q=芒果")
 	if err != nil {
 		t.Fatal(err)
@@ -1687,6 +1703,9 @@ func TestProfilePage(t *testing.T) {
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, "可见主题") || !strings.Contains(body, "wang") {
 		t.Fatalf("profile: %d %s", res.StatusCode, body)
 	}
+	if !strings.Contains(body, time.Now().UTC().Format("2006-01-02")) {
+		t.Fatalf("profile threads missing date: %s", body)
+	}
 	if !strings.Contains(body, "?tab=posts") {
 		t.Fatalf("own profile missing posts tab: %s", body)
 	}
@@ -1697,6 +1716,9 @@ func TestProfilePage(t *testing.T) {
 	body = readBody(t, res)
 	if !strings.Contains(body, "可见主题 #1") {
 		t.Fatalf("own posts tab: %s", body)
+	}
+	if !strings.Contains(body, time.Now().UTC().Format("2006-01-02")) {
+		t.Fatalf("profile posts missing date: %s", body)
 	}
 	res, err = founderC.Get(ts.URL + "/u/nosuch")
 	if err != nil {
