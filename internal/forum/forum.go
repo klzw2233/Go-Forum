@@ -2,6 +2,7 @@ package forum
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -477,4 +478,27 @@ func RoleLabel(r Role) string {
 
 func FormatTimeUTC(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04")
+}
+
+func QuoteBody(threadID int64, p PostView) string {
+	if threadID <= 0 || p.Floor < FirstFloor || p.Hidden {
+		return ""
+	}
+	head := "[#" + strconv.Itoa(p.Floor) + "](/threads/" + strconv.FormatInt(threadID, 10) + "#floor-" + strconv.Itoa(p.Floor) + ") " + p.AuthorDisplayName + " " + p.AuthorLoginName + "："
+	var b strings.Builder
+	b.WriteString("> ")
+	b.WriteString(head)
+	b.WriteByte('\n')
+	body := strings.ReplaceAll(p.BodyMarkdown, "\r\n", "\n")
+	body = strings.TrimRight(body, "\n")
+	if body == "" {
+		return b.String() + "\n"
+	}
+	for _, line := range strings.Split(body, "\n") {
+		b.WriteString("> ")
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	b.WriteByte('\n')
+	return b.String()
 }

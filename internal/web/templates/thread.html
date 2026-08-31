@@ -23,6 +23,7 @@
     <span class="muted">{{.CreatedAt.UTC.Format "2006-01-02 15:04"}} UTC</span>
     {{if not .ShowBody}}<span class="muted">已隐藏</span>{{end}}
     {{if .EditedLabel}}<span class="muted">{{.EditedLabel}}</span>{{end}}
+    {{if .CanQuote}}<a href="/threads/{{$.Thread.ID}}?quote={{.Floor}}#reply">引用</a>{{end}}
     {{if .CanEdit}}<a href="/posts/{{.ID}}/edit">编辑</a>{{end}}
     {{if $.CanViewEdits}}{{if .EditedLabel}}<a href="/posts/{{.ID}}/edits">历史</a>{{end}}{{end}}
     {{if $.CanHide}}
@@ -37,10 +38,10 @@
 </article>
 {{end}}
 {{if .CanReply}}
-<h2>回帖</h2>
+<h2 id="reply">回帖</h2>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 <form method="post" action="/threads/{{.Thread.ID}}/posts">
-  <label>正文（Markdown） <textarea name="body" rows="8" required></textarea></label>
+  <label>正文（Markdown） <textarea name="body" rows="8" required>{{.QuoteDraft}}</textarea></label>
   <button type="submit">回复</button>
 </form>
 {{else}}

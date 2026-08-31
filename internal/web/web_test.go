@@ -203,6 +203,36 @@ func TestPostingLoopAndExternalImage(t *testing.T) {
 	if !strings.Contains(body, day) {
 		t.Fatalf("board list missing date %s: %s", day, body)
 	}
+	if !strings.Contains(body, `href="/threads/1?quote=1#reply"`) {
+		// this is board list; quote link is on thread page — ignore
+	}
+	res, err = client.Get(ts.URL + "/threads/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, `href="/threads/1?quote=1#reply"`) {
+		t.Fatalf("quote link missing: %s", body)
+	}
+	res, err = client.Get(ts.URL + "/threads/1?quote=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if !strings.Contains(body, "[#1](/threads/1#floor-1) Jimmy jimmy：") {
+		t.Fatalf("quote draft missing: %s", body)
+	}
+	if !strings.Contains(body, "一楼 **粗体**") {
+		t.Fatalf("quoted body missing: %s", body)
+	}
+	res, err = client.Get(ts.URL + "/threads/1?quote=99")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(t, res)
+	if strings.Contains(body, "> [#99]") {
+		t.Fatalf("bad quote leaked: %s", body)
+	}
 }
 
 func TestInviteRegisterAndMemberCannotIssue(t *testing.T) {
@@ -492,6 +522,9 @@ func TestHideFloorAndHiddenThreadPage(t *testing.T) {
 	}
 	if strings.Contains(body, "二楼秘密") {
 		t.Fatalf("hidden body leaked: %s", body)
+	}
+	if strings.Contains(body, `quote=2`) {
+		t.Fatalf("hidden floor has quote: %s", body)
 	}
 	if !strings.Contains(body, "老王") && !strings.Contains(body, "jimmy") {
 		t.Fatalf("author missing on placeholder: %s", body)
@@ -1598,6 +1631,9 @@ func TestLockThreadHTTP(t *testing.T) {
 	body = readBody(t, res)
 	if !strings.Contains(body, "已锁定，不能回帖") || strings.Contains(body, `action="/threads/1/posts"`) {
 		t.Fatalf("member locked thread: %s", body)
+	}
+	if strings.Contains(body, "quote=") {
+		t.Fatalf("member locked no quote: %s", body)
 	}
 	res, err = founderC.PostForm(ts.URL+"/threads/1/posts", url.Values{"body": {"硬回"}})
 	if err != nil {

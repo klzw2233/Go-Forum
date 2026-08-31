@@ -63,6 +63,7 @@ li.unread-notice { font-weight: 600; }
 .post header { display: flex; gap: 0.75rem; margin-bottom: 0.5rem; color: var(--muted); }
 .post .body img { max-width: 100%; height: auto; }
 .post .body pre { overflow: auto; background: #f5f5f4; padding: 0.5rem; }
+.post .body blockquote { margin: 0 0 0.5rem; padding: 0 0.75rem; border-left: 3px solid var(--line); color: var(--muted); }
 .crumb { color: var(--muted); }
 code.invite { font-size: 1.05em; user-select: all; }
 table.invites, table.members { width: 100%; border-collapse: collapse; margin-top: 1rem; }
