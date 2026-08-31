@@ -1670,7 +1670,7 @@ func TestProfilePage(t *testing.T) {
 	res = follow(t, founderC, res)
 	_ = readBody(t, res)
 	registerMember(t, ts, founderC, "wang", "老王")
-	res, err = founderC.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"可见主题"}, "body": {"一楼"}})
+	res, err = founderC.PostForm(ts.URL+"/boards/1/threads/new", url.Values{"title": {"可见主题"}, "body": {"一楼 @jimmy"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1714,5 +1714,8 @@ func TestProfilePage(t *testing.T) {
 	body = readBody(t, res)
 	if !strings.Contains(body, `href="/u/wang"`) {
 		t.Fatalf("floor link: %s", body)
+	}
+	if !strings.Contains(body, `<a href="/u/jimmy">@jimmy</a>`) {
+		t.Fatalf("mention link: %s", body)
 	}
 }

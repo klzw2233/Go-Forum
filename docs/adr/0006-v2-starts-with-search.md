@@ -8,4 +8,4 @@
 
 锁主题只挡盖新楼：会员能看不能回，运营者仍能回。和隐藏正交。
 
-@ 只认登录名，通知表用 kind 扩展（现在 mention / reply，以后 message / system）。个人页后置，楼里的 @ 先不做成链接。
+@ 只认登录名，通知表用 kind 扩展（现在 mention / reply，以后 message / system）。楼里的 `@登录名` 链到 `/u/{login}`。

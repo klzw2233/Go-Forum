@@ -26,8 +26,14 @@ func newPolicy() *bluemonday.Policy {
 	p.RequireNoFollowOnLinks(false)
 	p.AllowAttrs("src").Matching(regexp.MustCompile(`(?i)^https?://`)).OnElements("img")
 	p.AllowAttrs("alt", "title").OnElements("img")
-	p.AllowAttrs("href").Matching(regexp.MustCompile(`(?i)^https?://`)).OnElements("a")
+	p.AllowAttrs("href").Matching(regexp.MustCompile(`(?i)^(https?://|/u/[A-Za-z][A-Za-z0-9_]{0,31})$`)).OnElements("a")
 	return p
+}
+
+var mentionRe = regexp.MustCompile(`(^|[\s>])@([A-Za-z][A-Za-z0-9_]{0,31})\b`)
+
+func linkMentions(html string) string {
+	return mentionRe.ReplaceAllString(html, `$1<a href="/u/$2">@$2</a>`)
 }
 
 func Render(src string) string {
@@ -35,6 +41,5 @@ func Render(src string) string {
 	if err := md.Convert([]byte(src), &buf); err != nil {
 		return ""
 	}
-	out := policy.Sanitize(buf.String())
-	return out
+	return policy.Sanitize(linkMentions(buf.String()))
 }
