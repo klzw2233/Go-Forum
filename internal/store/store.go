@@ -143,6 +143,26 @@ func Open(path string) (*Store, error) {
 			read INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_notifications_member ON notifications(member_id, id DESC)`,
+		`CREATE TABLE IF NOT EXISTS conversations (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			a_id INTEGER NOT NULL REFERENCES members(id),
+			b_id INTEGER NOT NULL REFERENCES members(id),
+			last_message_at TEXT NOT NULL,
+			UNIQUE(a_id, b_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+			author_id INTEGER NOT NULL REFERENCES members(id),
+			body_markdown TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS conversation_reads (
+			member_id INTEGER NOT NULL REFERENCES members(id),
+			conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+			last_read_id INTEGER NOT NULL,
+			PRIMARY KEY (member_id, conversation_id)
+		)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -1155,6 +1175,185 @@ func scanInvite(scanner interface {
 
 const inviteSelect = `SELECT i.id, i.code, i.issued_by, m.login_name, i.issued_at, i.revoked, i.used_by_login, i.used_at
 FROM invite_codes i JOIN members m ON m.id = i.issued_by`
+
+func pairIDs(x, y int64) (int64, int64) {
+	if x < y {
+		return x, y
+	}
+	return y, x
+}
+
+func (s *Store) SendMessage(from, to *forum.Member, body string) (*forum.DirectMessage, error) {
+	if !forum.CanMessage(from, to) {
+		return nil, forum.ErrCannotMessage
+	}
+	body, err := forum.NormalizeBody(body)
+	if err != nil {
+		return nil, err
+	}
+	a, b := pairIDs(from.ID, to.ID)
+	ts := now()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var convID int64
+	err = tx.QueryRow(`SELECT id FROM conversations WHERE a_id = ? AND b_id = ?`, a, b).Scan(&convID)
+	if err == sql.ErrNoRows {
+		res, err := tx.Exec(`INSERT INTO conversations (a_id, b_id, last_message_at) VALUES (?, ?, ?)`, a, b, ts)
+		if err != nil {
+			return nil, err
+		}
+		convID, err = res.LastInsertId()
+		if err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	} else {
+		if _, err := tx.Exec(`UPDATE conversations SET last_message_at = ? WHERE id = ?`, ts, convID); err != nil {
+			return nil, err
+		}
+	}
+	res, err := tx.Exec(`INSERT INTO messages (conversation_id, author_id, body_markdown, created_at) VALUES (?, ?, ?, ?)`, convID, from.ID, body, ts)
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO conversation_reads (member_id, conversation_id, last_read_id) VALUES (?, ?, ?)
+		ON CONFLICT(member_id, conversation_id) DO UPDATE SET last_read_id = excluded.last_read_id
+	`, from.ID, convID, id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &forum.DirectMessage{ID: id, ConversationID: convID, AuthorID: from.ID, BodyMarkdown: body, CreatedAt: parseTime(ts)}, nil
+}
+
+func (s *Store) ListConversations(memberID int64) ([]forum.Conversation, error) {
+	rows, err := s.db.Query(`
+		SELECT c.id, c.last_message_at,
+		       o.id, o.login_name, o.display_name, o.role, o.suspended, o.created_at,
+		       COALESCE((SELECT MAX(m.id) FROM messages m WHERE m.conversation_id = c.id), 0),
+		       r.last_read_id
+		FROM conversations c
+		JOIN members o ON o.id = CASE WHEN c.a_id = ? THEN c.b_id ELSE c.a_id END
+		LEFT JOIN conversation_reads r ON r.conversation_id = c.id AND r.member_id = ?
+		WHERE c.a_id = ? OR c.b_id = ?
+		ORDER BY c.last_message_at DESC, c.id DESC
+	`, memberID, memberID, memberID, memberID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []forum.Conversation
+	for rows.Next() {
+		var c forum.Conversation
+		var last, created string
+		var role string
+		var susp int
+		var maxID int64
+		var lastRead sql.NullInt64
+		if err := rows.Scan(&c.ID, &last, &c.Other.ID, &c.Other.LoginName, &c.Other.DisplayName, &role, &susp, &created, &maxID, &lastRead); err != nil {
+			return nil, err
+		}
+		c.LastMessageAt = parseTime(last)
+		c.Other.Role = forum.Role(role)
+		c.Other.Suspended = susp != 0
+		c.Other.CreatedAt = parseTime(created)
+		c.Unread = !lastRead.Valid || lastRead.Int64 < maxID
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ponytail: scan conversations; SQL COUNT if the inbox grows
+func (s *Store) UnreadConversationCount(memberID int64) (int, error) {
+	list, err := s.ListConversations(memberID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, c := range list {
+		if c.Unread {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (s *Store) ConversationWith(meID, otherID int64) (*forum.Conversation, error) {
+	if meID == otherID {
+		return nil, forum.ErrCannotMessage
+	}
+	a, b := pairIDs(meID, otherID)
+	var c forum.Conversation
+	var last, created, role string
+	var susp int
+	var maxID int64
+	var lastRead sql.NullInt64
+	err := s.db.QueryRow(`
+		SELECT c.id, c.last_message_at,
+		       o.id, o.login_name, o.display_name, o.role, o.suspended, o.created_at,
+		       COALESCE((SELECT MAX(m.id) FROM messages m WHERE m.conversation_id = c.id), 0),
+		       r.last_read_id
+		FROM conversations c
+		JOIN members o ON o.id = CASE WHEN c.a_id = ? THEN c.b_id ELSE c.a_id END
+		LEFT JOIN conversation_reads r ON r.conversation_id = c.id AND r.member_id = ?
+		WHERE c.a_id = ? AND c.b_id = ?
+	`, meID, meID, a, b).Scan(&c.ID, &last, &c.Other.ID, &c.Other.LoginName, &c.Other.DisplayName, &role, &susp, &created, &maxID, &lastRead)
+	if err == sql.ErrNoRows {
+		return nil, forum.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	c.LastMessageAt = parseTime(last)
+	c.Other.Role = forum.Role(role)
+	c.Other.Suspended = susp != 0
+	c.Other.CreatedAt = parseTime(created)
+	c.Unread = !lastRead.Valid || lastRead.Int64 < maxID
+	return &c, nil
+}
+
+func (s *Store) ListMessages(conversationID int64) ([]forum.DirectMessage, error) {
+	rows, err := s.db.Query(`
+		SELECT id, conversation_id, author_id, body_markdown, created_at
+		FROM messages WHERE conversation_id = ? ORDER BY id ASC
+	`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []forum.DirectMessage
+	for rows.Next() {
+		var m forum.DirectMessage
+		var created string
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.AuthorID, &m.BodyMarkdown, &created); err != nil {
+			return nil, err
+		}
+		m.CreatedAt = parseTime(created)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) MarkConversationRead(memberID, conversationID, lastID int64) error {
+	if memberID <= 0 || conversationID <= 0 || lastID <= 0 {
+		return forum.ErrNotFound
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO conversation_reads (member_id, conversation_id, last_read_id) VALUES (?, ?, ?)
+		ON CONFLICT(member_id, conversation_id) DO UPDATE SET last_read_id = excluded.last_read_id
+	`, memberID, conversationID, lastID)
+	return err
+}
 
 func (s *Store) IssueInvite(issuer *forum.Member, code string) (*forum.InviteCode, error) {
 	if !forum.CanIssueInvite(issuer) {

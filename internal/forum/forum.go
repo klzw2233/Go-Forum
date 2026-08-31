@@ -61,6 +61,7 @@ var (
 	ErrCannotSetPassword = errors.New("cannot set this password")
 	ErrSearchEmpty       = errors.New("search query is empty")
 	ErrSearchLong        = errors.New("search query is too long")
+	ErrCannotMessage     = errors.New("cannot send this message")
 )
 
 type Member struct {
@@ -155,7 +156,7 @@ type NotifyKind string
 const (
 	NotifyMention NotifyKind = "mention"
 	NotifyReply   NotifyKind = "reply"
-	// later: NotifyMessage, NotifySystem — same table, new kind values
+	// later: NotifySystem — same table, new kind values
 )
 
 type Notification struct {
@@ -171,6 +172,28 @@ type Notification struct {
 	Floor        int
 	CreatedAt    time.Time
 	Read         bool
+}
+
+type Conversation struct {
+	ID            int64
+	Other         Member
+	LastMessageAt time.Time
+	Unread        bool
+}
+
+type DirectMessage struct {
+	ID             int64
+	ConversationID int64
+	AuthorID       int64
+	BodyMarkdown   string
+	CreatedAt      time.Time
+}
+
+func CanMessage(from, to *Member) bool {
+	if from == nil || to == nil || from.ID == to.ID {
+		return false
+	}
+	return !from.Suspended && !to.Suspended
 }
 
 func (n Notification) KindLabel() string {

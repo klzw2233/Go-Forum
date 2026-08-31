@@ -1719,3 +1719,106 @@ func TestProfilePage(t *testing.T) {
 		t.Fatalf("mention link: %s", body)
 	}
 }
+
+func TestMessagesHTTP(t *testing.T) {
+	ts, founderC := testServer(t)
+	loginFounder(t, ts, founderC)
+	registerMember(t, ts, founderC, "wang", "老王")
+
+	loginFounder(t, ts, founderC)
+	res, err := founderC.Get(ts.URL + "/u/wang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readBody(t, res)
+	if !strings.Contains(body, `href="/messages/u/wang"`) {
+		t.Fatalf("profile link: %s", body)
+	}
+
+	res, err = founderC.Get(ts.URL + "/messages/u/jimmy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("self %d", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res, err = founderC.PostForm(ts.URL+"/messages/u/wang", url.Values{"body": {"你好 **王**"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("send %d %s", res.StatusCode, readBody(t, res))
+	}
+	res.Body.Close()
+
+	res, err = founderC.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := readBody(t, res)
+	if !strings.Contains(home, `href="/messages"`) {
+		t.Fatalf("nav: %s", home)
+	}
+	if strings.Contains(home, `href="/messages"`) && strings.Contains(home[strings.Index(home, `href="/messages"`):strings.Index(home, `href="/messages"`)+80], ">1<") {
+		t.Fatalf("sender should not have unread: %s", home)
+	}
+
+	res, err = founderC.PostForm(ts.URL+"/login", url.Values{"login_name": {"wang"}, "password": {"hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = follow(t, founderC, res)
+	_ = readBody(t, res)
+
+	res, err = founderC.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home = readBody(t, res)
+	if !strings.Contains(home, `href="/messages"`) || !strings.Contains(home, ">1<") {
+		t.Fatalf("wang unread badge: %s", home)
+	}
+
+	res, err = founderC.Get(ts.URL + "/messages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbox := readBody(t, res)
+	if !strings.Contains(inbox, "未读") || !strings.Contains(inbox, "jimmy") {
+		t.Fatalf("inbox: %s", inbox)
+	}
+
+	res, err = founderC.Get(ts.URL + "/messages/u/jimmy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := readBody(t, res)
+	if !strings.Contains(thread, "<strong>王</strong>") {
+		t.Fatalf("markdown: %s", thread)
+	}
+
+	res, err = founderC.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home = readBody(t, res)
+	if strings.Contains(home, ">1<") && strings.Contains(home, `href="/messages"`) {
+		// badge may still show notices; require messages badge specifically gone
+		idx := strings.Index(home, `href="/messages"`)
+		chunk := home[idx : idx+90]
+		if strings.Contains(chunk, ">1<") {
+			t.Fatalf("after open still unread: %s", chunk)
+		}
+	}
+
+	res, err = founderC.PostForm(ts.URL+"/messages/u/jimmy", url.Values{"body": {""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty := readBody(t, res)
+	if !strings.Contains(empty, "正文不能为空") {
+		t.Fatalf("empty body: %s", empty)
+	}
+}
