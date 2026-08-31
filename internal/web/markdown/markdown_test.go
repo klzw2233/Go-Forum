@@ -47,3 +47,20 @@ func TestRejectScript(t *testing.T) {
 		t.Fatalf("script leaked: %q", html)
 	}
 }
+
+func TestRenderMentionLink(t *testing.T) {
+	html := Render("hi @wang and @ok_1")
+	if !strings.Contains(html, `<a href="/u/wang">@wang</a>`) {
+		t.Fatalf("wang link missing: %q", html)
+	}
+	if !strings.Contains(html, `<a href="/u/ok_1">@ok_1</a>`) {
+		t.Fatalf("ok_1 link missing: %q", html)
+	}
+}
+
+func TestRenderEmailNotMention(t *testing.T) {
+	html := Render("mail me a@b.com")
+	if strings.Contains(html, `href="/u/b"`) || strings.Contains(html, `href="/u/b.com"`) {
+		t.Fatalf("email turned into profile: %q", html)
+	}
+}
