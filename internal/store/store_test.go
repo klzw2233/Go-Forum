@@ -1336,3 +1336,112 @@ func TestListPostsByAuthor(t *testing.T) {
 		t.Fatal("staff/other should still query")
 	}
 }
+
+func TestMessages(t *testing.T) {
+	s := testStore(t)
+	f := founder(t, s)
+	h, err := forum.HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "msgcodeaaaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	wang, err := s.Register("msgcodeaaaaaaa", "wang", "老王", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IssueInvite(f, "msgcodebbbbbbb"); err != nil {
+		t.Fatal(err)
+	}
+	zhao, err := s.Register("msgcodebbbbbbb", "zhao", "老赵", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.SendMessage(f, f, "hi"); err != forum.ErrCannotMessage {
+		t.Fatalf("self: %v", err)
+	}
+	if _, err := s.SendMessage(f, wang, "   "); err != forum.ErrBodyEmpty {
+		t.Fatalf("empty: %v", err)
+	}
+
+	m1, err := s.SendMessage(f, wang, "你好 **王**")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m1.AuthorID != f.ID || m1.BodyMarkdown != "你好 **王**" {
+		t.Fatalf("msg: %+v", m1)
+	}
+
+	n, err := s.UnreadConversationCount(wang.ID)
+	if err != nil || n != 1 {
+		t.Fatalf("wang unread %d err=%v", n, err)
+	}
+	n, err = s.UnreadConversationCount(f.ID)
+	if err != nil || n != 0 {
+		t.Fatalf("sender unread %d err=%v", n, err)
+	}
+
+	list, err := s.ListConversations(wang.ID)
+	if err != nil || len(list) != 1 || !list[0].Unread || list[0].Other.LoginName != "jimmy" {
+		t.Fatalf("wang list: %+v err=%v", list, err)
+	}
+	msgs, err := s.ListMessages(list[0].ID)
+	if err != nil || len(msgs) != 1 || msgs[0].BodyMarkdown != "你好 **王**" {
+		t.Fatalf("msgs: %+v err=%v", msgs, err)
+	}
+	if err := s.MarkConversationRead(wang.ID, list[0].ID, msgs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	n, err = s.UnreadConversationCount(wang.ID)
+	if err != nil || n != 0 {
+		t.Fatalf("after read %d", n)
+	}
+
+	m2, err := s.SendMessage(wang, f, "回你")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m2.ConversationID != m1.ConversationID {
+		t.Fatalf("pair not unique: %d %d", m1.ConversationID, m2.ConversationID)
+	}
+	n, err = s.UnreadConversationCount(f.ID)
+	if err != nil || n != 1 {
+		t.Fatalf("founder unread after reply %d err=%v", n, err)
+	}
+	n, err = s.UnreadConversationCount(wang.ID)
+	if err != nil || n != 0 {
+		t.Fatalf("wang unread after own send %d", n)
+	}
+
+	if _, err := s.SendMessage(f, zhao, "赵"); err != nil {
+		t.Fatal(err)
+	}
+	n, err = s.UnreadConversationCount(f.ID)
+	if err != nil || n != 1 {
+		t.Fatalf("two convs, one unread: %d", n)
+	}
+
+	if _, err := s.SetMemberSuspended(f, wang.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	wang, err = s.MemberByID(wang.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SendMessage(f, wang, "新的"); err != forum.ErrCannotMessage {
+		t.Fatalf("to suspended: %v", err)
+	}
+	old, err := s.ListMessages(m1.ConversationID)
+	if err != nil || len(old) != 2 {
+		t.Fatalf("old msgs gone: %+v err=%v", old, err)
+	}
+	_, err = s.ConversationWith(f.ID, zhao.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ConversationWith(f.ID, f.ID); err != forum.ErrCannotMessage {
+		t.Fatalf("self conv: %v", err)
+	}
+}

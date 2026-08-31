@@ -33,7 +33,7 @@ type Server struct {
 
 func New(st *store.Store) (*Server, error) {
 	s := &Server{store: st, mux: http.NewServeMux(), tpl: map[string]*template.Template{}}
-	pages := []string{"login.html", "home.html", "board_new.html", "board_edit.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "me.html", "search.html", "notifications.html", "profile.html", "post_edit.html", "post_edits.html", "title_edit.html"}
+	pages := []string{"login.html", "home.html", "board_new.html", "board_edit.html", "board.html", "thread_new.html", "thread.html", "thread_move.html", "register.html", "invites.html", "members.html", "member_password.html", "me.html", "search.html", "notifications.html", "profile.html", "messages.html", "message_thread.html", "post_edit.html", "post_edits.html", "title_edit.html"}
 	for _, p := range pages {
 		t, err := template.ParseFS(embedded, "templates/layout.html", "templates/"+p)
 		if err != nil {
@@ -58,6 +58,9 @@ func New(st *store.Store) (*Server, error) {
 	s.mux.HandleFunc("GET /{$}", s.requireMember(s.getHome))
 	s.mux.HandleFunc("GET /search", s.requireMember(s.getSearch))
 	s.mux.HandleFunc("GET /notifications", s.requireMember(s.getNotifications))
+	s.mux.HandleFunc("GET /messages", s.requireMember(s.getMessages))
+	s.mux.HandleFunc("GET /messages/u/{login}", s.requireMember(s.getMessageThread))
+	s.mux.HandleFunc("POST /messages/u/{login}", s.requireMember(s.postMessageThread))
 	s.mux.HandleFunc("POST /notifications/{id}/read", s.requireMember(s.postNotificationRead))
 	s.mux.HandleFunc("POST /notifications/read-all", s.requireMember(s.postNotificationsReadAll))
 	s.mux.HandleFunc("GET /invites", s.requireMember(s.getInvites))
@@ -140,6 +143,10 @@ type page struct {
 	ProfileOwn     bool
 	ProfileTab     string
 	AuthorPosts    []forum.AuthorPostView
+	Conversations  []forum.Conversation
+	UnreadMessages int
+	DirectMessages []msgVM
+	CanSendMessage bool
 }
 
 type memberVM struct {
@@ -205,6 +212,9 @@ func (s *Server) render(w http.ResponseWriter, name string, p page) {
 		p.CanLock = forum.CanLock(p.Member)
 		if n, err := s.store.UnreadNotificationCount(p.Member.ID); err == nil {
 			p.UnreadNotices = n
+		}
+		if n, err := s.store.UnreadConversationCount(p.Member.ID); err == nil {
+			p.UnreadMessages = n
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -429,6 +439,92 @@ func (s *Server) getSearch(w http.ResponseWriter, r *http.Request, m *forum.Memb
 	}
 	pg.Threads = threads
 	s.render(w, "search.html", pg)
+}
+
+type msgVM struct {
+	forum.DirectMessage
+	BodyHTML template.HTML
+	Mine     bool
+}
+
+func (s *Server) getMessages(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	list, err := s.store.ListConversations(m.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.render(w, "messages.html", page{Member: m, Conversations: list})
+}
+
+func (s *Server) getMessageThread(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.messageThread(w, r, m, false)
+}
+
+func (s *Server) postMessageThread(w http.ResponseWriter, r *http.Request, m *forum.Member) {
+	s.messageThread(w, r, m, true)
+}
+
+func (s *Server) messageThread(w http.ResponseWriter, r *http.Request, m *forum.Member, send bool) {
+	login := r.PathValue("login")
+	if !forum.ValidLoginName(login) {
+		http.NotFound(w, r)
+		return
+	}
+	other, _, err := s.store.MemberByLogin(login)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if other.ID == m.ID {
+		http.Error(w, "不能给自己发私信", http.StatusForbidden)
+		return
+	}
+	if send {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "form", http.StatusBadRequest)
+			return
+		}
+		_, err := s.store.SendMessage(m, other, r.FormValue("body"))
+		if err != nil {
+			conv, _ := s.store.ConversationWith(m.ID, other.ID)
+			msgs := []forum.DirectMessage{}
+			if conv != nil {
+				msgs, _ = s.store.ListMessages(conv.ID)
+			}
+			s.render(w, "message_thread.html", page{Member: m, Profile: other, DirectMessages: messageVMs(m, msgs), CanSendMessage: forum.CanMessage(m, other), Error: publicErr(err)})
+			return
+		}
+		http.Redirect(w, r, "/messages/u/"+other.LoginName, http.StatusSeeOther)
+		return
+	}
+	conv, err := s.store.ConversationWith(m.ID, other.ID)
+	var msgs []forum.DirectMessage
+	if err == nil {
+		msgs, err = s.store.ListMessages(conv.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(msgs) > 0 {
+			_ = s.store.MarkConversationRead(m.ID, conv.ID, msgs[len(msgs)-1].ID)
+		}
+	} else if err != forum.ErrNotFound {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.render(w, "message_thread.html", page{Member: m, Profile: other, DirectMessages: messageVMs(m, msgs), CanSendMessage: forum.CanMessage(m, other)})
+}
+
+func messageVMs(me *forum.Member, msgs []forum.DirectMessage) []msgVM {
+	out := make([]msgVM, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, msgVM{
+			DirectMessage: m,
+			BodyHTML:      template.HTML(markdown.Render(m.BodyMarkdown)),
+			Mine:          me != nil && m.AuthorID == me.ID,
+		})
+	}
+	return out
 }
 
 func (s *Server) getNotifications(w http.ResponseWriter, r *http.Request, m *forum.Member) {
@@ -961,6 +1057,8 @@ func publicErr(err error) string {
 		return "不能查看编辑历史"
 	case forum.ErrBodyEmpty:
 		return "正文不能为空"
+	case forum.ErrCannotMessage:
+		return "不能给这个会员发私信"
 	case forum.ErrCannotHidePost:
 		return "不能隐藏这篇帖"
 	case forum.ErrCannotReply:

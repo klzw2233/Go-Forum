@@ -1,0 +1,15 @@
+{{define "title"}}私信{{end}}
+{{define "content"}}
+<h1>私信</h1>
+{{if not .Conversations}}<p class="muted">还没有私信。打开别人的个人页可以发。</p>{{end}}
+<ul class="threads">
+{{range .Conversations}}
+  <li>
+    {{if .Unread}}<span class="badge">未读</span>{{end}}
+    <a href="/messages/u/{{.Other.LoginName}}">{{.Other.DisplayName}} <b class="login">{{.Other.LoginName}}</b></a>
+    {{if .Other.Suspended}}<span class="badge">已停用</span>{{end}}
+    <span class="muted">{{.LastMessageAt.UTC.Format "2006-01-02 15:04"}} UTC</span>
+  </li>
+{{end}}
+</ul>
+{{end}}

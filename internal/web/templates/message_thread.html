@@ -1,0 +1,24 @@
+{{define "title"}}和 {{.Profile.DisplayName}} 的私信{{end}}
+{{define "content"}}
+<p class="crumb"><a href="/messages">私信</a> / <a href="/u/{{.Profile.LoginName}}">{{.Profile.DisplayName}}</a></p>
+<h1>{{.Profile.DisplayName}} <b class="login">{{.Profile.LoginName}}</b>{{if .Profile.Suspended}} <span class="badge">已停用</span>{{end}}</h1>
+{{if not .DirectMessages}}<p class="muted">还没有消息。</p>{{end}}
+{{range .DirectMessages}}
+<article class="post">
+  <header>
+    {{if .Mine}}<span class="muted">我</span>{{else}}<span class="muted">{{$.Profile.DisplayName}}</span>{{end}}
+    <span class="muted">{{.CreatedAt.UTC.Format "2006-01-02 15:04"}} UTC</span>
+  </header>
+  <div class="body">{{.BodyHTML}}</div>
+</article>
+{{end}}
+{{if .CanSendMessage}}
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form method="post" action="/messages/u/{{.Profile.LoginName}}">
+  <label>正文（Markdown） <textarea name="body" rows="6" required></textarea></label>
+  <button type="submit">发送</button>
+</form>
+{{else}}
+<p class="muted">不能给这个会员发私信。</p>
+{{end}}
+{{end}}

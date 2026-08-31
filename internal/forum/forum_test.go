@@ -22,6 +22,26 @@ func TestMentionedLoginNames(t *testing.T) {
 	}
 }
 
+func TestCanMessage(t *testing.T) {
+	a := &Member{ID: 1, Role: RoleMember}
+	b := &Member{ID: 2, Role: RoleMember}
+	if CanMessage(a, a) || CanMessage(nil, b) {
+		t.Fatal("self or nil")
+	}
+	if !CanMessage(a, b) {
+		t.Fatal("member to member")
+	}
+	b.Suspended = true
+	if CanMessage(a, b) {
+		t.Fatal("suspended target")
+	}
+	b.Suspended = false
+	a.Suspended = true
+	if CanMessage(a, b) {
+		t.Fatal("suspended sender")
+	}
+}
+
 func TestValidLoginName(t *testing.T) {
 	ok := []string{"a", "jimmy", "Wang", "a1", "a_b", "A0_z", "abcdefghijabcdefghijabcdefghijab"}
 	for _, s := range ok {

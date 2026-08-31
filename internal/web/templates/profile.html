@@ -6,6 +6,7 @@
   <a href="/u/{{.Profile.LoginName}}"{{if eq .ProfileTab "threads"}} class="on"{{end}}>主题</a>
   <a href="/u/{{.Profile.LoginName}}?tab=posts"{{if eq .ProfileTab "posts"}} class="on"{{end}}>帖</a>
 </p>
+{{else}}<p><a href="/messages/u/{{.Profile.LoginName}}">发私信</a></p>
 {{end}}
 {{if eq .ProfileTab "posts"}}
   {{if not .AuthorPosts}}<p class="muted">还没有帖。</p>{{end}}
