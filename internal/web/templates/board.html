@@ -21,6 +21,7 @@
     {{if .Locked}}<span class="badge">已锁定</span>{{end}}
     <a href="/threads/{{.ID}}">{{.Title}}</a>
     <span class="muted">{{.AuthorDisplayName}} <a href="/u/{{.AuthorLoginName}}"><b class="login">{{.AuthorLoginName}}</b></a></span>
+    <span class="muted">{{.LastPostAt.UTC.Format "2006-01-02 15:04"}} UTC</span>
     {{if $.CanPin}}
       {{if .Pinned}}
       <form class="inline" method="post" action="/threads/{{.ID}}/pin-up"><button type="submit">上移</button></form>

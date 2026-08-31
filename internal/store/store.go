@@ -798,7 +798,7 @@ func (s *Store) ListThreadsByAuthor(viewer *forum.Member, authorID int64) ([]for
 		LEFT JOIN thread_reads r ON r.thread_id = t.id AND r.member_id = ?
 		WHERE t.author_id = ?
 		  AND (? = 1 OR b.disabled = 0)
-		ORDER BY t.last_post_at DESC, t.id DESC
+		ORDER BY t.created_at DESC, t.id DESC
 	`
 	rows, err := s.db.Query(q, viewerID, authorID, staffN)
 	if err != nil {
