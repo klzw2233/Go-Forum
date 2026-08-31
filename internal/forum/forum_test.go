@@ -358,3 +358,25 @@ func TestCanSeeBoard(t *testing.T) {
 		t.Fatal("nil board is never visible")
 	}
 }
+
+func TestQuoteBody(t *testing.T) {
+	p := PostView{
+		Post:              Post{Floor: 3, BodyMarkdown: "hello\nworld"},
+		AuthorLoginName:   "wang",
+		AuthorDisplayName: "老王",
+	}
+	got := QuoteBody(1, p)
+	want := "> [#3](/threads/1#floor-3) 老王 wang：\n> hello\n> world\n\n"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	p.Hidden = true
+	if QuoteBody(1, p) != "" {
+		t.Fatal("hidden")
+	}
+	p.Hidden = false
+	p.Floor = 0
+	if QuoteBody(1, p) != "" {
+		t.Fatal("bad floor")
+	}
+}

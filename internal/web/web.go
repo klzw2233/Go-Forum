@@ -147,6 +147,7 @@ type page struct {
 	UnreadMessages int
 	DirectMessages []msgVM
 	CanSendMessage bool
+	QuoteDraft     string
 }
 
 type memberVM struct {
@@ -164,6 +165,7 @@ type postVM struct {
 	CanEdit     bool
 	EditedLabel string
 	ShowBody    bool
+	CanQuote    bool
 }
 
 type editVM struct {
@@ -961,9 +963,22 @@ func (s *Server) getThread(w http.ResponseWriter, r *http.Request, m *forum.Memb
 	if maxFloor >= forum.FirstFloor {
 		_ = s.store.MarkThreadRead(m.ID, th.ID, maxFloor)
 	}
-	pg := page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts), ThreadHidden: hidden, CanEditTitle: forum.CanEditTitle(m, th, hidden), CanReply: forum.CanReply(m, th)}
+	canReply := forum.CanReply(m, th)
+	pg := page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts, canReply), ThreadHidden: hidden, CanEditTitle: forum.CanEditTitle(m, th, hidden), CanReply: canReply}
 	if th.TitleEditedAt != nil {
 		pg.TitleEdited = "标题已改 " + forum.FormatTimeUTC(*th.TitleEditedAt) + " UTC"
+	}
+	if canReply {
+		if q := r.URL.Query().Get("quote"); q != "" {
+			if floor, err := strconv.Atoi(q); err == nil {
+				for _, p := range posts {
+					if p.Floor == floor {
+						pg.QuoteDraft = forum.QuoteBody(th.ID, p)
+						break
+					}
+				}
+			}
+		}
 	}
 	s.render(w, "thread.html", pg)
 }
@@ -1004,7 +1019,7 @@ func (s *Server) postReply(w http.ResponseWriter, r *http.Request, m *forum.Memb
 		}
 		b, _ := s.store.BoardByID(th.BoardID)
 		posts, _ := s.store.ListPosts(th.ID)
-		s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts), Error: publicErr(err), CanReply: forum.CanReply(m, th)})
+		s.render(w, "thread.html", page{Member: m, Board: b, Thread: th, Posts: postVMs(m, posts, forum.CanReply(m, th)), Error: publicErr(err), CanReply: forum.CanReply(m, th)})
 		return
 	}
 	http.Redirect(w, r, "/threads/"+strconv.FormatInt(th.ID, 10), http.StatusSeeOther)
@@ -1090,7 +1105,7 @@ func publicErr(err error) string {
 	}
 }
 
-func postVMs(m *forum.Member, posts []forum.PostView) []postVM {
+func postVMs(m *forum.Member, posts []forum.PostView, canReply bool) []postVM {
 	vms := make([]postVM, 0, len(posts))
 	staff := forum.CanHidePost(m)
 	for _, p := range posts {
@@ -1100,6 +1115,7 @@ func postVMs(m *forum.Member, posts []forum.PostView) []postVM {
 			RoleLabel: forum.RoleLabel(p.AuthorRole),
 			CanEdit:   forum.CanEditPost(m, &p.Post),
 			ShowBody:  show,
+			CanQuote:  canReply && show && !p.Hidden,
 		}
 		if show {
 			vm.BodyHTML = template.HTML(markdown.Render(p.BodyMarkdown))
